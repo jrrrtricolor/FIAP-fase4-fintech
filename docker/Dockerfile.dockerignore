@@ -1,0 +1,14 @@
+.git
+.ai
+.DS_Store
+.env
+.venv
+venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+.ipynb_checkpoints
+mlruns
+data
+docs

@@ -1,0 +1,13 @@
+target-version = "py312"
+line-length = 88
+
+[lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
+[lint.per-file-ignores]
+"notebooks/*.ipynb" = ["E402"]
