@@ -152,9 +152,7 @@ class ModelPredictor:
         model = self._require_model()
 
         if not hasattr(model, "predict_proba"):
-            raise AttributeError(
-                "O modelo carregado não implementa predict_proba()."
-            )
+            raise AttributeError("O modelo carregado não implementa predict_proba().")
 
         return model.predict_proba(self.prepare_input(X))
 

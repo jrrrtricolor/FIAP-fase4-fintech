@@ -65,9 +65,7 @@ class ModelPredictorTest(unittest.TestCase):
         )
 
         set_tracking_uri_mock.assert_called_once_with("sqlite:///mlflow.db")
-        load_model_mock.assert_called_once_with(
-            "models:/example_classifier@champion"
-        )
+        load_model_mock.assert_called_once_with("models:/example_classifier@champion")
         self.assertIs(predictor.model, loaded_model)
 
     @patch("joblib.load")
