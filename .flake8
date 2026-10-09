@@ -1,0 +1,10 @@
+[flake8]
+max-line-length = 88
+extend-exclude =
+    .ai,
+    .venv,
+    venv,
+    data
+per-file-ignores =
+    notebooks/*.ipynb: E402
+    notebooks/*.py: E402
