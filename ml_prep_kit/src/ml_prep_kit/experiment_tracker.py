@@ -3,8 +3,9 @@
 import io
 import logging
 import warnings
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 import mlflow
@@ -38,6 +39,7 @@ class ExperimentTracker:
         self,
         experiment_name: str,
         tracking_uri: str | None = None,
+        artifact_location: str | None = None,
     ) -> None:
         """Configura o experimento usado pelos registros.
 
@@ -53,7 +55,107 @@ class ExperimentTracker:
         if tracking_uri:
             mlflow.set_tracking_uri(tracking_uri)
 
+        client = MlflowClient()
+        experiment = client.get_experiment_by_name(experiment_name)
+        self.experiment_id = (
+            experiment.experiment_id
+            if experiment
+            else client.create_experiment(
+                experiment_name, artifact_location=artifact_location
+            )
+        )
         mlflow.set_experiment(experiment_name)
+
+    @contextmanager
+    def run(self, name, parameters=None, tags=None, nested=False):
+        """Rastreia execução completa, inclusive duração e falha no treinamento.
+
+        Exemplo:
+            with tracker.run("logistic_regression", parameters={"seed": 42}):
+                model.fit(X_train, y_train)
+                model_uri = tracker.log_model(model, features=X_train)
+        """
+        if self.tracking_uri:
+            mlflow.set_tracking_uri(self.tracking_uri)
+        started = perf_counter()
+        with mlflow.start_run(
+            experiment_id=self.experiment_id, run_name=name, nested=nested
+        ) as run:
+            self.log(parameters=parameters, tags=tags)
+            try:
+                yield run
+            finally:
+                mlflow.log_metric("run_duration_seconds", perf_counter() - started)
+
+    def log(self, parameters=None, metrics=None, tags=None, artifacts=None):
+        """Registra evidências na execução ativa; métricas indefinidas são omitidas.
+
+        Exemplo:
+            with tracker.run("avaliacao"):
+                tracker.log(
+                    parameters={"threshold": 0.5},
+                    metrics={"roc_auc": 0.63, "recall": None},
+                    tags={"split": "teste"},
+                    artifacts=["data/processed/classification_report.json"],
+                )
+        """
+        if parameters:
+            mlflow.log_params(self._stringify_values(parameters))
+        if metrics:
+            mlflow.log_metrics({k: v for k, v in metrics.items() if v is not None})
+        if tags:
+            mlflow.set_tags(self._stringify_values(tags))
+        for artifact in artifacts or []:
+            path = Path(artifact)
+            if path.is_dir():
+                mlflow.log_artifacts(str(path), artifact_path=path.name)
+            else:
+                mlflow.log_artifact(str(path))
+
+    def log_model(
+        self, model, features=None, name="model", registered_model_name=None
+    ) -> str:
+        """Salva pipeline local do framework e assinatura, sem amostras de clientes.
+
+        Cloudpickle preserva os transformers Python do framework. Como Joblib,
+        a recarga é destinada a artefatos confiáveis gerados pelo próprio fluxo.
+
+        Exemplo:
+            with tracker.run("treinamento"):
+                pipeline.fit(X_train, y_train)
+                model_uri = tracker.log_model(pipeline, features=X_train)
+        """
+        signature = None
+        if features is not None:
+            signature = mlflow.models.infer_signature(features, model.predict(features))
+        info = mlflow.sklearn.log_model(
+            sk_model=model,
+            name=name,
+            signature=signature,
+            serialization_format="cloudpickle",
+            registered_model_name=registered_model_name,
+        )
+        return info.model_uri
+
+    def log_evaluation(self, run_id, reports, artifacts=None, parameters=None):
+        """Anexa avaliação final à execução que treinou o modelo.
+
+        Exemplo:
+            tracker.log_evaluation(
+                training_run_id,
+                {"teste": test_report},
+                parameters={"selected_threshold": threshold},
+            )
+        """
+        if self.tracking_uri:
+            mlflow.set_tracking_uri(self.tracking_uri)
+        with mlflow.start_run(run_id=run_id):
+            metrics = {
+                f"{split}_{key}": value
+                for split, report in reports.items()
+                for key, value in report["metrics"].items()
+            }
+            self.log(metrics=metrics, artifacts=artifacts, parameters=parameters)
 
     def log_training_run(
         self,
@@ -86,27 +188,11 @@ class ExperimentTracker:
             },
         )
 
-        with mlflow.start_run(run_name=run_name) as run:
-            mlflow.log_params(self._stringify_values(parameters))
-            mlflow.log_metrics(metrics)
-
-            for artifact in artifacts or []:
-                mlflow.log_artifact(str(artifact))
-
-            with warnings.catch_warnings():
-                warnings.filterwarnings(
-                    "ignore",
-                    message="Saving scikit-learn models.*",
-                )
-                with (
-                    redirect_stdout(io.StringIO()),
-                    redirect_stderr(io.StringIO()),
-                ):
-                    mlflow.sklearn.log_model(
-                        sk_model=model,
-                        name=model_name,
-                        registered_model_name=registered_model_name,
-                    )
+        with self.run(run_name, parameters=parameters) as run:
+            self.log(metrics=metrics, artifacts=artifacts)
+            self.log_model(
+                model, name=model_name, registered_model_name=registered_model_name
+            )
 
             logger.info(
                 "Registro concluído no MLflow.",
@@ -248,7 +334,11 @@ class ExperimentTracker:
         return str(latest_version.version)
 
     def _stringify_values(self, values: dict[str, Any]) -> dict[str, Any]:
-        """Converte valores complexos para texto aceito pelo MLflow."""
+        """Converte valores complexos para texto aceito pelo MLflow.
+
+        Exemplo:
+            parameters = tracker._stringify_values({"layers": [32, 16]})
+        """
         formatted = {}
 
         for key, value in values.items():

@@ -1,5 +1,8 @@
 """Métricas reutilizáveis para avaliação de classificadores."""
 
+import json
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 from sklearn.metrics import (
@@ -20,7 +23,136 @@ from sklearn.metrics import (
 
 
 class ModelEvaluator:
-    """Calcula métricas para classificação binária ou multiclasse."""
+    """Calcula métricas para classificação binária ou multiclasse.
+
+    Exemplo:
+        evaluator = ModelEvaluator()
+        report = evaluator.evaluate_binary_classification(
+            [0, 1, 0, 1], [0.1, 0.8, 0.3, 0.6], threshold=0.5
+        )
+    """
+
+    @classmethod
+    def save_report(cls, report, path):
+        """Salva métricas e tabelas agregadas; não persiste dados individuais.
+
+        Exemplo:
+            evaluator.save_report(
+                report, "data/processed/classification_report.json"
+            )
+        """
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                cls._report_values(report),
+                ensure_ascii=False,
+                indent=2,
+                allow_nan=False,
+            ),
+            encoding="utf-8",
+        )
+
+    @classmethod
+    def _report_values(cls, value):
+        """Converte DataFrames em estruturas JSON, preservando índice e colunas.
+
+        Exemplo:
+            payload = ModelEvaluator._report_values(
+                {"metrics": pd.DataFrame({"roc_auc": [0.63]})}
+            )
+        """
+        if isinstance(value, pd.DataFrame):
+            return json.loads(value.to_json(orient="split"))
+        if isinstance(value, dict):
+            return {key: cls._report_values(item) for key, item in value.items()}
+        return value
+
+    def save_evaluation(self, evaluation, intervals, thresholds, figures, directory):
+        """Salva relatórios JSON, métricas CSV e figuras PNG no diretório informado.
+
+        Exemplo:
+            directory = evaluator.save_evaluation(
+                evaluation=evaluation,
+                intervals=confidence_intervals,
+                thresholds=threshold_metrics,
+                figures={"confusion_matrix": confusion_figure},
+                directory="data/processed/evaluation",
+            )
+        """
+        directory = Path(directory)
+        directory.mkdir(parents=True, exist_ok=True)
+        self.save_report(
+            {"reports": evaluation["reports"], "confidence_intervals": intervals},
+            directory / "classification_report.json",
+        )
+        for name, frame in {
+            "global_metrics": evaluation["global_metrics"],
+            "metrics_by_class": evaluation["class_metrics"],
+            "confidence_intervals": intervals,
+            "threshold_metrics": thresholds,
+        }.items():
+            frame.to_csv(directory / f"{name}.csv")
+        for name, figure in figures.items():
+            figure.savefig(directory / f"{name}.png", dpi=160, bbox_inches="tight")
+        return directory
+
+    def select_threshold(self, target, scores, thresholds=None) -> tuple:
+        """Escolhe maior F1 na validação; desempata por recall e menor limiar.
+
+        Exemplo:
+            threshold, table = evaluator.select_threshold(
+                y_validation, validation_scores, thresholds=[0.3, 0.5, 0.7]
+            )
+        """
+        if thresholds is None:
+            thresholds = np.arange(0.05, 1.0, 0.05)
+        rows = [
+            self._binary_metrics(
+                *self._validate_binary_inputs(target, scores, float(t)), float(t)
+            )
+            for t in thresholds
+        ]
+        if not rows:
+            raise ValueError("Informe pelo menos um limiar.")
+        table = pd.DataFrame(rows).sort_values(
+            ["f1", "recall", "threshold"], ascending=[False, False, True]
+        )
+        if table["f1"].isna().all():
+            raise ValueError("Não há F1 definido para escolher o limiar.")
+        return float(table.iloc[0]["threshold"]), table
+
+    def evaluate_models(self, models, datasets, thresholds) -> dict:
+        """Avalia modelos congelados em partições, sem ajuste ou seleção.
+
+        Exemplo:
+            evaluation = evaluator.evaluate_models(
+                models={"logistic_regression": trained_pipeline},
+                datasets={"teste": (X_test, y_test)},
+                thresholds={"logistic_regression": selected_threshold},
+            )
+        """
+        from .model_predictor import ModelPredictor
+
+        reports, scores, rows, classes = {}, {}, [], []
+        for name, model in models.items():
+            reports[name], scores[name] = {}, {}
+            predictor = ModelPredictor(model)
+            for split, (features, target) in datasets.items():
+                score = predictor.positive_scores(features)
+                report = self.evaluate_binary_classification(
+                    target, score, threshold=thresholds[name]
+                )
+                reports[name][split] = report
+                scores[name][split] = score
+                rows.append({"model": name, "split": split, **report["metrics"]})
+                classes.append(report["by_class"].assign(model=name, split=split))
+        return {
+            "reports": reports,
+            "scores": scores,
+            "global_metrics": pd.DataFrame(rows).set_index(["model", "split"]),
+            "class_metrics": pd.concat(classes, ignore_index=True),
+        }
 
     def evaluate_classification(
         self,
@@ -34,6 +166,13 @@ class ModelEvaluator:
         compatibilidade com fluxos binários, ``precision``, ``recall`` e ``f1``
         representam a classe positiva em problemas 0/1 e a média macro em
         problemas multiclasse.
+
+        Exemplo:
+            metrics = evaluator.evaluate_classification(
+                y_true=[0, 1, 0, 1],
+                y_pred=[0, 1, 0, 0],
+                y_score=[0.1, 0.8, 0.2, 0.4],
+            )
         """
         labels = np.unique(np.asarray(y_true))
         is_binary = len(labels) == 2
@@ -124,7 +263,13 @@ class ModelEvaluator:
         y_pred: pd.Series | np.ndarray | list,
         labels: list | np.ndarray | None = None,
     ) -> pd.DataFrame:
-        """Retorna métricas por classe, incluindo rótulos explícitos sem suporte."""
+        """Retorna métricas por classe, incluindo rótulos explícitos sem suporte.
+
+        Exemplo:
+            by_class = evaluator.evaluate_classification_by_class(
+                y_true=[0, 1, 0, 1], y_pred=[0, 1, 0, 0], labels=[0, 1]
+            )
+        """
         labels = np.unique(np.asarray(y_true)) if labels is None else np.asarray(labels)
         precision, recall, f1, support = precision_recall_fscore_support(
             y_true,
@@ -160,6 +305,14 @@ class ModelEvaluator:
 
         Os scores devem ser um vetor de probabilidades em [0, 1]. A avaliação
         não escolhe o limiar e não ajusta nem calibra o modelo.
+
+        Exemplo:
+            report = evaluator.evaluate_binary_classification(
+                y_true=[0, 1, 0, 1],
+                y_score=[0.1, 0.8, 0.2, 0.4],
+                threshold=0.5,
+            )
+            matrix = report["confusion_matrix"]
         """
         target, scores = self._validate_binary_inputs(y_true, y_score, threshold)
         if not isinstance(calibration_bins, int) or calibration_bins < 2:
@@ -225,6 +378,12 @@ class ModelEvaluator:
         observados; não incluem a incerteza do treinamento ou da seleção.
         valid_resamples informa quantas reamostragens tiveram a métrica definida;
         intervalos de métricas indefinidas em todas as reamostragens ficam ausentes.
+
+        Exemplo:
+            intervals = evaluator.bootstrap_binary_metrics(
+                y_test, test_scores, threshold=0.5,
+                n_resamples=500, confidence_level=0.95, random_state=42,
+            )
         """
         target, scores = self._validate_binary_inputs(y_true, y_score, threshold)
         if len(np.unique(target)) != 2:
@@ -263,6 +422,13 @@ class ModelEvaluator:
         )
 
     def _validate_binary_inputs(self, y_true, y_score, threshold):
+        """Valida alvos, probabilidades e limiar; retorna os vetores NumPy.
+
+        Exemplo:
+            target, scores = evaluator._validate_binary_inputs(
+                [0, 1], [0.2, 0.8], threshold=0.5
+            )
+        """
         target = np.asarray(y_true)
         scores = np.asarray(y_score, dtype=float)
         if target.ndim != 1 or scores.ndim != 1 or len(target) == 0:
@@ -280,11 +446,24 @@ class ModelEvaluator:
         return target.astype(int), scores
 
     def _binary_metrics(self, target, scores, threshold):
+        """Calcula métricas binárias a partir de vetores previamente validados.
+
+        Exemplo:
+            metrics = evaluator._binary_metrics(
+                np.array([0, 1]), np.array([0.2, 0.8]), threshold=0.5
+            )
+        """
         predictions = (scores >= threshold).astype(int)
         metrics = self.evaluate_classification(target, predictions)
         tn, fp, fn, tp = confusion_matrix(target, predictions, labels=[0, 1]).ravel()
 
         def rate(numerator, denominator):
+            """Calcula uma taxa ou retorna None quando o denominador é zero.
+
+            Exemplo:
+                recall = rate(3, 4)
+                undefined = rate(0, 0)
+            """
             return float(numerator / denominator) if denominator else None
 
         both_classes = len(np.unique(target)) == 2

@@ -6,9 +6,23 @@ from typing import Any, Literal
 
 
 class _OnnxTextClassifier:
-    """Adapta um classificador textual ONNX ao contrato Scikit-Learn."""
+    """Adapta um classificador textual ONNX ao contrato Scikit-Learn.
+
+    Exemplo:
+        classifier = _OnnxTextClassifier(
+            "model/classifier.onnx", classes=["negativo", "positivo"]
+        )
+        predictions = classifier.predict(["Excelente atendimento"])
+    """
 
     def __init__(self, model_path: str | Path, classes: Sequence[str]) -> None:
+        """Abre a sessão ONNX em CPU e define a ordem das classes de saída.
+
+        Exemplo:
+            classifier = _OnnxTextClassifier(
+                "model/classifier.onnx", classes=["negativo", "positivo"]
+            )
+        """
         import numpy as np
         import onnxruntime as ort
 
@@ -28,6 +42,11 @@ class _OnnxTextClassifier:
         self.classes_ = np.asarray(list(classes), dtype=object)
 
     def _prepare_input(self, texts: Sequence[str]) -> dict[str, Any]:
+        """Converte textos em uma matriz de uma coluna para a entrada ONNX.
+
+        Exemplo:
+            inputs = classifier._prepare_input(["Excelente atendimento"])
+        """
         if isinstance(texts, str):
             raise TypeError("A entrada deve ser uma coleção de textos.")
         materialized = list(texts)
@@ -41,14 +60,24 @@ class _OnnxTextClassifier:
         }
 
     def predict(self, texts: Sequence[str]) -> Any:
-        """Retorna as classes calculadas pelo ONNX Runtime."""
+        """Retorna as classes calculadas pelo ONNX Runtime.
+
+        Exemplo:
+            labels = classifier.predict(["Excelente atendimento"])
+        """
         return self._session.run(
             [self._label_output],
             self._prepare_input(texts),
         )[0]
 
     def predict_proba(self, texts: Sequence[str]) -> Any:
-        """Retorna uma probabilidade por classe e texto."""
+        """Retorna uma probabilidade por classe e texto.
+
+        Exemplo:
+            probabilities = classifier.predict_proba(
+                ["Excelente atendimento"]
+            )
+        """
         probabilities = self._session.run(
             [self._probability_output],
             self._prepare_input(texts),
@@ -76,7 +105,11 @@ class ModelPredictor:
         model: Any | None = None,
         preprocessor: Any | None = None,
     ) -> None:
-        """Guarda as dependências de inferência recebidas."""
+        """Guarda as dependências de inferência recebidas.
+
+        Exemplo:
+            predictor = ModelPredictor(model=trained_pipeline)
+        """
         self.model = model
         self.preprocessor = preprocessor
 
@@ -95,6 +128,12 @@ class ModelPredictor:
         Modelos PyTorch com tokenização própria devem ser registrados como
         wrapper Scikit-Learn ou modelo PyFunc para preservar o contrato de
         inferência.
+
+        Exemplo:
+            predictor = ModelPredictor.from_mlflow(
+                "models:/example_classifier@champion",
+                tracking_uri="sqlite:///mlflow.db",
+            )
         """
         import mlflow
         import mlflow.pyfunc
@@ -112,7 +151,11 @@ class ModelPredictor:
 
     @classmethod
     def from_joblib(cls, model_path: str | Path) -> "ModelPredictor":
-        """Carrega um pipeline local serializado com Joblib."""
+        """Carrega um pipeline local serializado com Joblib.
+
+        Exemplo:
+            predictor = ModelPredictor.from_joblib("model/pipeline.joblib")
+        """
         import joblib
 
         return cls(model=joblib.load(model_path))
@@ -123,17 +166,33 @@ class ModelPredictor:
         model_path: str | Path,
         classes: Sequence[str],
     ) -> "ModelPredictor":
-        """Carrega um classificador textual otimizado para ONNX Runtime."""
+        """Carrega um classificador textual otimizado para ONNX Runtime.
+
+        Exemplo:
+            predictor = ModelPredictor.from_onnx(
+                "model/classifier.onnx", classes=["negativo", "positivo"]
+            )
+        """
         return cls(model=_OnnxTextClassifier(model_path, classes))
 
     def load_preprocessor(self, artifact_path: str | Path) -> None:
-        """Carrega um preprocessador Joblib salvo localmente."""
+        """Carrega um preprocessador Joblib salvo localmente.
+
+        Exemplo:
+            predictor = ModelPredictor(model=trained_estimator)
+            predictor.load_preprocessor("model/preprocessor.joblib")
+        """
         import joblib
 
         self.preprocessor = joblib.load(artifact_path)
 
     def prepare_input(self, X: Any) -> Any:
-        """Aplica o preprocessador quando ele estiver configurado."""
+        """Aplica o preprocessador quando ele estiver configurado.
+
+        Exemplo:
+            predictor = ModelPredictor(model=model, preprocessor=preprocessor)
+            transformed = predictor.prepare_input(X_test)
+        """
         if self.preprocessor is None:
             return X
 
@@ -143,12 +202,20 @@ class ModelPredictor:
         return self.preprocessor.transform(X)
 
     def predict(self, X: Any) -> Any:
-        """Prepara a entrada e retorna as classes ou valores previstos."""
+        """Prepara a entrada e retorna as classes ou valores previstos.
+
+        Exemplo:
+            predictions = predictor.predict(X_test)
+        """
         model = self._require_model()
         return model.predict(self.prepare_input(X))
 
     def predict_proba(self, X: Any) -> Any:
-        """Prepara a entrada e retorna scores por classe."""
+        """Prepara a entrada e retorna scores por classe.
+
+        Exemplo:
+            probabilities = predictor.predict_proba(X_test)
+        """
         model = self._require_model()
 
         if not hasattr(model, "predict_proba"):
@@ -156,8 +223,37 @@ class ModelPredictor:
 
         return model.predict_proba(self.prepare_input(X))
 
+    def positive_scores(self, X: Any, positive_label: Any = 1) -> Any:
+        """Seleciona a probabilidade pela classe, independentemente da ordem.
+
+        Exemplo:
+            scores = predictor.positive_scores(X_test, positive_label=1)
+        """
+        model = self._require_model()
+        classes = list(model.classes_)
+        if positive_label not in classes:
+            raise ValueError("Classe positiva ausente no modelo.")
+        return self.predict_proba(X)[:, classes.index(positive_label)]
+
+    def assert_equivalent(self, other: "ModelPredictor", X: Any) -> None:
+        """Confirma a equivalência de scores após persistência/recarga.
+
+        Exemplo:
+            reloaded = ModelPredictor.from_mlflow(model_uri)
+            original = ModelPredictor(model=trained_pipeline)
+            original.assert_equivalent(reloaded, X_test)
+        """
+        import numpy as np
+
+        np.testing.assert_allclose(self.predict_proba(X), other.predict_proba(X))
+
     def _require_model(self) -> Any:
-        """Retorna o modelo configurado ou interrompe a inferência."""
+        """Retorna o modelo configurado ou interrompe a inferência.
+
+        Exemplo:
+            predictor = ModelPredictor(model=trained_pipeline)
+            model = predictor._require_model()
+        """
         if self.model is None:
             raise ValueError("Nenhum modelo foi configurado para predição.")
 

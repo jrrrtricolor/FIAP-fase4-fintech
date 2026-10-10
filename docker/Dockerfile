@@ -14,7 +14,8 @@ COPY requirements-ml-prep.txt /tmp/requirements-ml-prep.txt
 
 RUN pip install --no-cache-dir \
     --index-url https://download.pytorch.org/whl/cpu \
-    --requirement /tmp/requirements-ml-prep.txt
+    --requirement /tmp/requirements-ml-prep.txt \
+    && pip check
 
 
 FROM python:3.12-slim AS runtime
@@ -32,7 +33,7 @@ RUN apt-get update \
 WORKDIR /app
 
 COPY --from=builder /opt/venv /opt/venv
-COPY ruff.toml ./ruff.toml
+COPY ruff.toml .flake8 ./
 COPY src ./src
 COPY notebooks ./notebooks
 COPY tests ./tests

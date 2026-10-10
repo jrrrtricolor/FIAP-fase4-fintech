@@ -1,1 +1,2 @@
-torch>=2.4,<3.0
+# O Docker instala esta versão pelo índice oficial de wheels CPU do PyTorch.
+torch==2.14.1

@@ -9,6 +9,8 @@ _PACKAGE_DIR = Path(__file__).resolve().parent / "src" / "ml_prep_kit"
 __path__.append(str(_PACKAGE_DIR))
 
 _EXPORTS = {
+    "DriftMonitor": ("drift_monitor", "DriftMonitor"),
+    "HomeCreditData": ("home_credit_data", "HomeCreditData"),
     "CategoricalStore": ("categorical_store", "CategoricalStore"),
     "CSVDataLoader": ("csv_data_loader", "CSVDataLoader"),
     "DataValidator": ("data_validator", "DataValidator"),
@@ -57,7 +59,12 @@ __all__ = list(_EXPORTS)
 
 
 def __getattr__(name: str) -> Any:
-    """Importa somente o componente solicitado pelo consumidor."""
+    """Importa somente o componente solicitado pelo consumidor.
+
+    Exemplo:
+        from ml_prep_kit import DataValidator
+        validator = DataValidator()
+    """
     if name not in _EXPORTS:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 

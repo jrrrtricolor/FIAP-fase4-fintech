@@ -9,6 +9,7 @@ export IMAGE TAG
 
 VENV_PYTHON := $(VENV)/bin/python
 VENV_RUFF := $(VENV)/bin/ruff
+VENV_FLAKE8 := $(VENV)/bin/flake8
 VENV_PYTEST := $(VENV)/bin/pytest
 DEPENDENCIES_STAMP := $(VENV)/.dependencies-installed
 
@@ -24,12 +25,14 @@ $(DEPENDENCIES_STAMP): requirements.txt requirements-ml-prep.txt $(VENV_PYTHON)
 	$(VENV_PYTHON) -m pip install --upgrade pip
 	$(VENV_PYTHON) -m pip install --requirement requirements.txt
 	$(VENV_PYTHON) -m pip install --requirement requirements-ml-prep.txt
+	$(VENV_PYTHON) -m pip check
 	@touch $(DEPENDENCIES_STAMP)
 
 install: $(DEPENDENCIES_STAMP) ## Cria o ambiente virtual e instala as dependências
 
 lint: install ## Verifica qualidade e conformidade PEP 8
 	$(VENV_RUFF) check .
+	$(VENV_FLAKE8) src tests ml_prep_kit
 
 format: install ## Formata o código Python e os notebooks
 	$(VENV_RUFF) format .
@@ -41,6 +44,7 @@ test: install ## Executa os testes do projeto
 	PYTHONPATH=src:ml_prep_kit/src $(VENV_PYTEST) tests ml_prep_kit/tests
 
 check: lint format-check test ## Executa todas as verificações de qualidade
+	$(VENV_PYTHON) -m pip check
 
 notebook: install ## Inicia o JupyterLab localmente
 	$(VENV)/bin/jupyter lab --notebook-dir=.
