@@ -19,6 +19,7 @@ from ml_prep_kit import (
     ModelEvaluator,
     ModelFactory,
     ModelPredictor,
+    VisualizationReporter,
 )
 
 
@@ -172,6 +173,77 @@ def test_experiment_roundtrip_and_overlapping_partitions_are_rejected(raw, tmp_p
         data.load_experiment(tmp_path)
 
 
+def test_drift_version_preserves_source_labels_and_csv_roundtrip(raw, tmp_path):
+    """Verifica que a v2 muda só duas features e persiste sem alterar a origem.
+
+    Exemplo:
+        pytest ml_prep_kit/tests/test_tabular_workflow.py -k drift_version
+    """
+    data = HomeCreditData()
+    original = data.prepare(raw)
+    preserved = original.copy(deep=True)
+    path = tmp_path / "credit_scoring_v2.csv"
+    changed_columns = ["AMT_INCOME_TOTAL", "AMT_CREDIT"]
+    version_two = data.create_drift_version(original, output_path=path)
+    pd.testing.assert_frame_equal(original, preserved)
+    pd.testing.assert_frame_equal(
+        version_two.drop(columns=changed_columns),
+        original.drop(columns=changed_columns),
+    )
+    np.testing.assert_allclose(
+        version_two["AMT_INCOME_TOTAL"], original["AMT_INCOME_TOTAL"] * 0.7
+    )
+    np.testing.assert_allclose(version_two["AMT_CREDIT"], original["AMT_CREDIT"] * 1.4)
+    pd.testing.assert_frame_equal(version_two, data.create_drift_version(original))
+    pd.testing.assert_frame_equal(
+        version_two, data.contract.validate(pd.read_csv(path))
+    )
+    scenarios, _ = data.scenarios(original, original)
+    pd.testing.assert_frame_equal(version_two, scenarios["data_drift"])
+
+
+@pytest.mark.parametrize("factor", [0, -1, np.nan, np.inf])
+def test_drift_version_rejects_invalid_factors_before_saving(raw, tmp_path, factor):
+    """Impede que parâmetros inválidos gerem ou sobrescrevam a versão salva.
+
+    Exemplo:
+        pytest ml_prep_kit/tests/test_tabular_workflow.py -k invalid_factors
+    """
+    data = HomeCreditData()
+    original = data.prepare(raw)
+    path = tmp_path / "credit_scoring_v2.csv"
+    path.write_text("arquivo preservado")
+    for parameter in ["income_factor", "credit_factor"]:
+        with pytest.raises(ValueError, match="positivos e finitos"):
+            data.create_drift_version(original, **{parameter: factor}, output_path=path)
+        assert path.read_text() == "arquivo preservado"
+
+
+def test_overlaid_histograms_compare_percentages_with_shared_bins():
+    """Verifica percentuais comparáveis mesmo quando as bases têm volumes distintos.
+
+    Exemplo:
+        pytest ml_prep_kit/tests/test_tabular_workflow.py -k overlaid_histograms
+    """
+    reference = pd.DataFrame({"value": [1.0, 1.0, 10.0, np.nan]})
+    current = pd.DataFrame({"value": [1.0, 1.0, 10.0] * 4})
+    figure = VisualizationReporter().plot_overlaid_histograms(
+        reference, current, columns=["value"], bins=2, log_columns=["value"]
+    )
+    axis = figure.axes[0]
+    first, second = [patch.get_path().vertices for patch in axis.patches]
+    np.testing.assert_allclose(first, second)
+    assert first[:, 0].min() == 1.0
+    assert first[:, 0].max() == 10.0
+    assert first[:, 1].max() == pytest.approx(200 / 3)
+    assert axis.get_xscale() == "log"
+    assert "nulos=1" in axis.get_legend().get_texts()[0].get_text()
+    with pytest.raises(ValueError, match="positivos"):
+        VisualizationReporter().plot_overlaid_histograms(
+            reference, pd.DataFrame({"value": [0.0]}), ["value"], log_columns=["value"]
+        )
+
+
 def test_mlflow_reload_and_drift_detection(raw, tmp_path):
     """Verifica registro, recarga, inferência e detecção de drift no fluxo.
 
@@ -251,7 +323,7 @@ def test_notebooks_only_orchestrate_framework_components():
         pytest ml_prep_kit/tests/test_tabular_workflow.py -k notebooks
     """
     root = Path(__file__).resolve().parents[2]
-    for path in (root / "notebooks").glob("0[123]_*.ipynb"):
+    for path in (root / "notebooks").glob("0[1234]_*.ipynb"):
         for cell in json.loads(path.read_text())["cells"]:
             if cell["cell_type"] == "code":
                 tree = ast.parse("".join(cell["source"]))

@@ -202,6 +202,35 @@ class HomeCreditData:
         self.validate_partitions(experiment["partitions"])
         return experiment
 
+    def create_drift_version(
+        self, frame, income_factor=0.70, credit_factor=1.40, output_path=None
+    ):
+        """Cria uma cópia validada com renda e crédito alterados; salva se solicitado.
+
+        Preserva IDs, alvo e demais colunas. Os fatores simulam Data Drift,
+        sem produzir novos desfechos nem modificar o DataFrame de origem.
+
+        Exemplo:
+            version_two = data.create_drift_version(
+                version_one,
+                income_factor=0.70,
+                credit_factor=1.40,
+                output_path="data/processed/credit_scoring_v2.csv",
+            )
+        """
+        factors = np.asarray([income_factor, credit_factor], dtype=float)
+        if not np.isfinite(factors).all() or (factors <= 0).any():
+            raise ValueError("Os fatores devem ser positivos e finitos.")
+        shifted = self.contract.validate(frame, lazy=True).copy(deep=True)
+        shifted["AMT_INCOME_TOTAL"] *= factors[0]
+        shifted["AMT_CREDIT"] *= factors[1]
+        shifted = self.contract.validate(shifted, lazy=True)
+        if output_path is not None:
+            path = Path(output_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            shifted.to_csv(path, index=False)
+        return shifted
+
     def scenarios(self, production, reference):
         """Cópias pareadas: renda ×0,70, crédito ×1,40 e desfechos sintéticos.
 
@@ -214,9 +243,7 @@ class HomeCreditData:
         """
         # Mantém a intervenção reproduzível mesmo após reordenar as partições.
         production = production.sort_values("SK_ID_CURR")
-        data_drift = production.copy()
-        data_drift["AMT_INCOME_TOTAL"] *= 0.70
-        data_drift["AMT_CREDIT"] *= 1.40
+        data_drift = self.create_drift_version(production)
         cutoff = float(reference["AMT_INCOME_TOTAL"].quantile(0.75))
         rng = np.random.default_rng(self.random_state)
         changed = (

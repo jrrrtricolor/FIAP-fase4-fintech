@@ -285,6 +285,90 @@ class VisualizationReporter:
         self._show_or_close(plt)
         return fig
 
+    def plot_overlaid_histograms(
+        self,
+        reference,
+        current,
+        columns,
+        bins=30,
+        log_columns=(),
+        labels=("Base v1", "Base v2"),
+    ):
+        """Sobrepõe distribuições com intervalos comuns e percentuais por base.
+
+        Nulos são excluídos apenas do gráfico e seu total aparece na legenda.
+        Colunas logarítmicas exigem valores positivos; os dados não são alterados.
+        Cada base soma 100%, permitindo comparar amostras de tamanhos distintos.
+
+        Exemplo:
+            figure = reporter.plot_overlaid_histograms(
+                version_one, version_two,
+                columns=["AMT_INCOME_TOTAL", "AMT_CREDIT", "AGE_YEARS"],
+                log_columns=["AMT_INCOME_TOTAL", "AMT_CREDIT"],
+            )
+            figure.savefig("histogramas_drift.png", dpi=150)
+        """
+        import numpy as np
+
+        if not columns or not isinstance(bins, int) or bins < 2:
+            raise ValueError("Informe colunas e pelo menos dois intervalos.")
+        distributions = []
+        for column in columns:
+            values = [
+                frame[column].dropna().to_numpy(dtype=float)
+                for frame in (reference, current)
+            ]
+            if any(value.size == 0 or not np.isfinite(value).all() for value in values):
+                raise ValueError(f"{column}: informe valores numéricos finitos.")
+            combined = np.concatenate(values)
+            if column in log_columns:
+                if (combined <= 0).any():
+                    raise ValueError(f"{column}: escala log exige valores positivos.")
+                edges = 10 ** np.histogram_bin_edges(np.log10(combined), bins=bins)
+                edges[0], edges[-1] = combined.min(), combined.max()
+                if edges[0] == edges[-1]:
+                    edges = np.geomspace(combined[0] / 2, combined[0] * 2, bins + 1)
+            else:
+                edges = np.histogram_bin_edges(combined, bins=bins)
+            distributions.append((values, edges))
+
+        plt = self._get_pyplot()
+        fig, axes = plt.subplots(
+            1, len(columns), figsize=(5 * len(columns), 4.5), squeeze=False
+        )
+        for ax, column, (values, edges) in zip(
+            axes[0], columns, distributions, strict=True
+        ):
+            for frame, value, label, color in zip(
+                (reference, current),
+                values,
+                labels,
+                ("#2166ac", "#d95f02"),
+                strict=True,
+            ):
+                missing = len(frame) - value.size
+                ax.hist(
+                    value,
+                    bins=edges,
+                    weights=np.full(value.size, 100 / value.size),
+                    alpha=0.45,
+                    color=color,
+                    edgecolor=color,
+                    histtype="stepfilled",
+                    label=f"{label} (n={value.size}; nulos={missing})",
+                )
+            if column in log_columns:
+                ax.set_xscale("log")
+            ax.set(
+                title=column,
+                xlabel="Valor (escala log)" if column in log_columns else "Valor",
+                ylabel="Registros válidos por intervalo (%)",
+            )
+            ax.legend(fontsize=8)
+        fig.tight_layout()
+        self._show_or_close(plt)
+        return fig
+
     def plot_thresholds(self, table, threshold):
         """Compara métricas na validação e destaca o limiar escolhido.
 
