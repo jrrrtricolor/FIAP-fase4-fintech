@@ -13,7 +13,7 @@ from .structured_logging_configurator import StructuredLoggingConfigurator
 
 
 class DriftMonitor:
-    """Monitora um lote; o notebook escolhe e executa a sequência de cenários.
+    """Valida lotes e registra comparações estatísticas e cenários de monitoramento.
 
     Exemplo:
         data = HomeCreditData()
@@ -226,6 +226,87 @@ class DriftMonitor:
                 "Lote encerrado.",
                 extra={"cenario": name, "status": result["status"], **metrics},
             )
+
+    def evaluate_scenarios(
+        self,
+        scenarios,
+        reference,
+        predictor,
+        contract,
+        target,
+        tracker,
+        threshold=0.5,
+        control_name="controle",
+        parameters=None,
+        tags=None,
+        figures=None,
+    ):
+        """Executa o controle primeiro e registra cenários e artefatos no MLflow.
+
+        Lotes rejeitados não chegam ao modelo. Sem rótulos, o alerta de
+        desempenho permanece indisponível. Retorna resultados, resumo e run_id.
+
+        Exemplo:
+            monitoring = monitor.evaluate_scenarios(
+                scenarios=scenarios,
+                reference=train,
+                predictor=predictor,
+                contract=data.contract,
+                target=data.target,
+                tracker=tracker,
+                threshold=0.5,
+                tags={"training_run_id": training_run_id},
+                figures={"histogramas": figure},
+            )
+            summary = monitoring["summary"]
+        """
+        if control_name not in scenarios:
+            raise ValueError("O cenário de controle é obrigatório.")
+        results = {}
+        control_auc = None
+        names = [control_name, *[name for name in scenarios if name != control_name]]
+        with tracker.run(
+            self.output_dir.name,
+            parameters={
+                **(parameters or {}),
+                **self.parameters,
+                "threshold": threshold,
+            },
+            tags=tags,
+        ) as run:
+            for name in names:
+                with tracker.run(name, nested=True):
+                    result = self.evaluate_batch(
+                        name,
+                        scenarios[name],
+                        reference,
+                        predictor,
+                        contract,
+                        target,
+                        threshold=threshold,
+                        control_auc=control_auc,
+                    )
+                    tracker.log(
+                        metrics=result["metrics"],
+                        tags={"status": result["status"]},
+                        artifacts=result["artifacts"],
+                    )
+                    results[name] = result
+                    if name == control_name:
+                        control_auc = result["metrics"].get("roc_auc")
+            summary = self.summarize(results, self.output_dir / "summary.json")
+            artifacts = [
+                self.output_dir / "summary.json",
+                self.output_dir / "pipeline.jsonl",
+            ]
+            for name, figure in (figures or {}).items():
+                if Path(name).name != name or name in {"", ".", ".."}:
+                    raise ValueError("Nome de figura inválido.")
+                path = self.output_dir / f"{name}.png"
+                figure.savefig(path, dpi=150, bbox_inches="tight")
+                artifacts.append(path)
+            tracker.log(artifacts=artifacts)
+        return {"results": results, "summary": summary, "run_id": run.info.run_id}
 
     @staticmethod
     def summarize(results, path):

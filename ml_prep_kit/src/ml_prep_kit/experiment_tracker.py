@@ -157,6 +157,25 @@ class ExperimentTracker:
             }
             self.log(metrics=metrics, artifacts=artifacts, parameters=parameters)
 
+    def train_model(self, name, model, features, target, parameters=None, tags=None):
+        """Treina e salva um pipeline em uma execução rastreada, incluindo falhas.
+
+        Ajusta a instância recebida uma única vez nos dados informados. Retorna
+        os identificadores usados para anexar avaliações e recuperar o modelo.
+
+        Exemplo:
+            record = tracker.train_model(
+                "baseline", pipeline, X_train, y_train,
+                parameters={"seed": 42}, tags={"source_sha256": source_hash},
+            )
+            model_uri = record["model_uri"]
+            training_run_id = record["run_id"]
+        """
+        with self.run(name, parameters=parameters, tags=tags) as run:
+            model.fit(features, target)
+            model_uri = self.log_model(model, features=features)
+            return {"run_id": run.info.run_id, "model_uri": model_uri}
+
     def log_training_run(
         self,
         run_name: str,

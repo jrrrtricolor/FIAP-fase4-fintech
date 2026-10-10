@@ -266,10 +266,17 @@ def test_mlflow_reload_and_drift_detection(raw, tmp_path):
         f"sqlite:///{tmp_path / 'mlflow.db'}",
         artifact_location=(tmp_path / "artifacts").as_uri(),
     )
-    with tracker.run("training") as training:
-        model.fit(train[data.features], train[data.target])
-        uri = tracker.log_model(model, features=train[data.features])
-    predictor = ModelPredictor.from_mlflow(uri, tracking_uri=tracker.tracking_uri)
+    training = tracker.train_model(
+        "training",
+        model,
+        train[data.features],
+        train[data.target],
+        parameters={"seed": 42},
+        tags={"source": "synthetic"},
+    )
+    predictor = ModelPredictor.from_mlflow(
+        training["model_uri"], tracking_uri=tracker.tracking_uri
+    )
     predictor.assert_equivalent(ModelPredictor(model), test[data.features])
     future = test[data.features].copy()
     future["AMT_INCOME_TOTAL"] *= 1000
@@ -286,8 +293,11 @@ def test_mlflow_reload_and_drift_detection(raw, tmp_path):
     evaluation = ModelEvaluator().evaluate_binary_classification(
         test[data.target], predictor.positive_scores(test[data.features])
     )
-    tracker.log_evaluation(training.info.run_id, {"teste": evaluation})
-    assert "teste_roc_auc" in MlflowClient().get_run(training.info.run_id).data.metrics
+    tracker.log_evaluation(training["run_id"], {"teste": evaluation})
+    saved_training = MlflowClient().get_run(training["run_id"])
+    assert "teste_roc_auc" in saved_training.data.metrics
+    assert saved_training.data.params["seed"] == "42"
+    assert saved_training.data.tags["source"] == "synthetic"
     monitor = DriftMonitor(
         data.numeric_features,
         data.categorical_features + data.binary_features,
@@ -310,10 +320,56 @@ def test_mlflow_reload_and_drift_detection(raw, tmp_path):
     )
     assert result["metrics"]["performance_alert"] is None
     assert result["evaluation"] is None
-    with pytest.raises(RuntimeError):
-        with tracker.run("failure") as failed:
-            raise RuntimeError("expected")
-    assert MlflowClient().get_run(failed.info.run_id).info.status == "FAILED"
+    scenarios, _ = data.scenarios(partitions["producao"], train)
+    observed = Mock(wraps=predictor)
+    monitoring = monitor.evaluate_scenarios(
+        scenarios,
+        train,
+        observed,
+        data.contract,
+        data.target,
+        tracker,
+        tags={"training_run_id": training["run_id"]},
+    )
+    assert next(iter(monitoring["results"])) == "controle"
+    assert monitoring["results"]["dados_invalidos"]["status"] == "rejeitado"
+    assert monitoring["summary"].loc["dados_invalidos", "predicted_rows"] == 0
+    assert observed.positive_scores.call_count == 3
+    summary = monitoring["summary"]
+    assert summary.loc["concept_drift", "auc_drop"] == pytest.approx(
+        summary.loc["controle", "roc_auc"] - summary.loc["concept_drift", "roc_auc"]
+    )
+    client = MlflowClient()
+    parent = client.get_run(monitoring["run_id"])
+    assert parent.data.tags["training_run_id"] == training["run_id"]
+    children = client.search_runs(
+        [tracker.experiment_id],
+        filter_string=f"tags.mlflow.parentRunId = '{monitoring['run_id']}'",
+    )
+    assert len(children) == 4
+    assert all(child.info.status == "FINISHED" for child in children)
+    assert "summary.json" in {
+        p.path for p in client.list_artifacts(monitoring["run_id"])
+    }
+    with pytest.raises(ValueError, match="controle"):
+        monitor.evaluate_scenarios(
+            {"data_drift": shifted},
+            train,
+            predictor,
+            data.contract,
+            data.target,
+            tracker,
+        )
+    broken_model = Mock()
+    broken_model.fit.side_effect = RuntimeError("expected")
+    with pytest.raises(RuntimeError, match="expected"):
+        tracker.train_model(
+            "failure", broken_model, train[data.features], train[data.target]
+        )
+    failed = client.search_runs(
+        [tracker.experiment_id], filter_string="tags.mlflow.runName = 'failure'"
+    )
+    assert len(failed) == 1 and failed[0].info.status == "FAILED"
 
 
 def test_notebooks_only_orchestrate_framework_components():
@@ -323,7 +379,7 @@ def test_notebooks_only_orchestrate_framework_components():
         pytest ml_prep_kit/tests/test_tabular_workflow.py -k notebooks
     """
     root = Path(__file__).resolve().parents[2]
-    for path in (root / "notebooks").glob("0[1234]_*.ipynb"):
+    for path in (root / "notebooks").glob("*.ipynb"):
         for cell in json.loads(path.read_text())["cells"]:
             if cell["cell_type"] == "code":
                 tree = ast.parse("".join(cell["source"]))
