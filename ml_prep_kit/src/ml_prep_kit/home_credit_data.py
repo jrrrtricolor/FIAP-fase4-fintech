@@ -158,6 +158,63 @@ class HomeCreditData:
         if pd.concat(partitions.values())["SK_ID_CURR"].duplicated().any():
             raise ValueError("Há sobreposição de IDs entre partições.")
 
+    def prepare_version(self, frame, reference_partitions):
+        """Limpa a versão já convertida e preserva as partições para o treinamento.
+
+        Exemplo:
+            partitions_v2 = data.prepare_version(version_two, experiment["partitions"])
+        """
+        self.validate_partitions(reference_partitions)
+        prepared = self._clean_version(frame)
+        partitions = self._align_version(prepared, reference_partitions)
+        self.validate_partitions(partitions)
+        if set(partitions["treino"][self.target].unique()) != {0, 1}:
+            raise ValueError("O treino exige exemplos das duas classes do TARGET.")
+        return partitions
+
+    def model_datasets(self, partitions):
+        """Separa features e alvo para modelagem; exclui IDs e produção reservada.
+
+        Exemplo:
+            datasets = data.model_datasets(partitions)
+            X_train, y_train = datasets["treino"]
+        """
+        self.validate_partitions(partitions)
+        return {
+            name: (part[self.features], part[self.target])
+            for name, part in partitions.items()
+            if name != "producao"
+        }
+
+    def _clean_version(self, frame):
+        """Limpa categorias e exige o contrato e os rótulos, sem imputar valores.
+
+        Exemplo:
+            prepared = data._clean_version(version_two)
+        """
+        prepared = frame.copy(deep=True)
+        for name in self.categorical_features:
+            prepared[name] = prepared[name].str.strip().astype(object)
+        prepared = self.contract.validate(prepared, lazy=True)
+        if self.target not in prepared:
+            raise ValueError("O treinamento da nova versão exige TARGET.")
+        return prepared
+
+    def _align_version(self, prepared, reference_partitions):
+        """Exige todos os IDs da referência e recupera sua partição e ordem.
+
+        Exemplo:
+            partitions = data._align_version(prepared, experiment["partitions"])
+        """
+        reference_ids = pd.concat(reference_partitions.values())["SK_ID_CURR"]
+        if set(prepared["SK_ID_CURR"]) != set(reference_ids):
+            raise ValueError("A nova versão deve preservar todos os IDs da referência.")
+        indexed = prepared.set_index("SK_ID_CURR", drop=False)
+        return {
+            name: indexed.loc[original["SK_ID_CURR"]].reset_index(drop=True)
+            for name, original in reference_partitions.items()
+        }
+
     @staticmethod
     def source_hash(path):
         """Calcula o SHA-256 do arquivo para identificar a versão dos dados.

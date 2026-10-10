@@ -69,15 +69,12 @@ class ModelEvaluator:
         return value
 
     def save_evaluation(self, evaluation, intervals, thresholds, figures, directory):
-        """Salva relatórios JSON, métricas CSV e figuras PNG no diretório informado.
+        """Salva relatórios, tabelas e figuras; intervals=None omite intervalos.
 
         Exemplo:
             directory = evaluator.save_evaluation(
-                evaluation=evaluation,
-                intervals=confidence_intervals,
-                thresholds=threshold_metrics,
-                figures={"confusion_matrix": confusion_figure},
-                directory="data/processed/evaluation",
+                evaluation, confidence_intervals, threshold_metrics,
+                {"confusion_matrix": confusion_figure}, "data/processed/evaluation",
             )
         """
         directory = Path(directory)
@@ -86,16 +83,30 @@ class ModelEvaluator:
             {"reports": evaluation["reports"], "confidence_intervals": intervals},
             directory / "classification_report.json",
         )
-        for name, frame in {
+        self._save_evaluation_tables(evaluation, intervals, thresholds, directory)
+        for name, figure in (figures or {}).items():
+            figure.savefig(directory / f"{name}.png", dpi=160, bbox_inches="tight")
+        return directory
+
+    @staticmethod
+    def _save_evaluation_tables(evaluation, intervals, thresholds, directory):
+        """Exporta somente as tabelas calculadas, sem simular evidências ausentes.
+
+        Exemplo:
+            evaluator._save_evaluation_tables(evaluation, None, thresholds, directory)
+        """
+        tables = {
             "global_metrics": evaluation["global_metrics"],
             "metrics_by_class": evaluation["class_metrics"],
             "confidence_intervals": intervals,
             "threshold_metrics": thresholds,
-        }.items():
-            frame.to_csv(directory / f"{name}.csv")
-        for name, figure in figures.items():
-            figure.savefig(directory / f"{name}.png", dpi=160, bbox_inches="tight")
-        return directory
+        }
+        for name, frame in tables.items():
+            path = directory / f"{name}.csv"
+            if frame is not None:
+                frame.to_csv(path)
+            else:
+                path.unlink(missing_ok=True)
 
     def select_threshold(self, target, scores, thresholds=None) -> tuple:
         """Escolhe maior F1 na validação; desempata por recall e menor limiar.

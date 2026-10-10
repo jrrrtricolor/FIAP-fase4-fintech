@@ -3,7 +3,7 @@
 import io
 import logging
 import warnings
-from contextlib import contextmanager, redirect_stderr, redirect_stdout
+from contextlib import contextmanager, nullcontext, redirect_stderr, redirect_stdout
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -11,6 +11,9 @@ from typing import Any
 import mlflow
 import mlflow.sklearn
 from mlflow.tracking import MlflowClient
+
+from .model_evaluator import ModelEvaluator
+from .structured_logging_configurator import StructuredLoggingConfigurator
 
 logger = logging.getLogger(__name__)
 
@@ -66,26 +69,99 @@ class ExperimentTracker:
         )
         mlflow.set_experiment(experiment_name)
 
+    @classmethod
+    def from_directory(cls, experiment_name, directory, artifact_subdir="artifacts"):
+        """Configura tracking local em SQLite e artefatos em uma pasta separada.
+
+        Exemplo:
+            tracker = ExperimentTracker.from_directory(
+                "credito", "data/processed/monitoring", "training_artifacts"
+            )
+        """
+        directory = Path(directory).resolve()
+        artifact_dir = directory / artifact_subdir
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        return cls(
+            experiment_name,
+            tracking_uri=f"sqlite:///{directory / 'mlflow.db'}",
+            artifact_location=artifact_dir.as_uri(),
+        )
+
     @contextmanager
-    def run(self, name, parameters=None, tags=None, nested=False):
-        """Rastreia execução completa, inclusive duração e falha no treinamento.
+    def run(self, name, parameters=None, tags=None, nested=None):
+        """Rastreia duração e falhas; por padrão, execuções internas tornam-se filhas.
 
         Exemplo:
             with tracker.run("logistic_regression", parameters={"seed": 42}):
                 model.fit(X_train, y_train)
-                model_uri = tracker.log_model(model, features=X_train)
         """
         if self.tracking_uri:
             mlflow.set_tracking_uri(self.tracking_uri)
         started = perf_counter()
         with mlflow.start_run(
-            experiment_id=self.experiment_id, run_name=name, nested=nested
+            experiment_id=self.experiment_id,
+            run_name=name,
+            nested=mlflow.active_run() is not None if nested is None else nested,
         ) as run:
             self.log(parameters=parameters, tags=tags)
             try:
                 yield run
             finally:
                 mlflow.log_metric("run_duration_seconds", perf_counter() - started)
+
+    @contextmanager
+    def workflow(self, name, result):
+        """Registra o desfecho global e a etapa da falha, preservando a exceção.
+
+        Exemplo:
+            with tracker.workflow("credito", result):
+                tracker.step("carga", load_data, result)
+        """
+        self.workflow_logger = StructuredLoggingConfigurator.file_logger(
+            f"workflow.{name}", Path(result["output_dir"]) / "workflow.jsonl"
+        )
+        with self.run(name) as run:
+            result["workflow_run_id"] = run.info.run_id
+            try:
+                yield
+            except Exception as error:
+                result.update(status="falha", error_type=type(error).__name__)
+                result["failed_stage"] = result.get("stage", "inicializacao")
+                raise
+            finally:
+                self.save_workflow_result(result)
+
+    def step(self, name, action, result):
+        """Identifica e executa uma etapa dentro do contexto workflow.
+
+        Exemplo:
+            with tracker.workflow("credito", result):
+                tracker.step("carga", load_data, result)
+        """
+        result["stage"] = name
+        self.workflow_logger.info(
+            "Etapa iniciada.",
+            extra={"etapa": name, "workflow_id": result["workflow_run_id"]},
+        )
+        return action()
+
+    def save_workflow_result(self, result):
+        """Anexa resultado e log ao MLflow antes de encerrar a execução global.
+
+        Exemplo:
+            tracker.save_workflow_result(result)
+        """
+        directory = Path(result["output_dir"])
+        self.workflow_logger.log(
+            logging.ERROR if result["status"] == "falha" else logging.INFO,
+            "Workflow encerrado.",
+            extra=result,
+        )
+        ModelEvaluator.save_report(result, directory / "result.json")
+        self.log(
+            tags={"status": result["status"]},
+            artifacts=[directory / "result.json", directory / "workflow.jsonl"],
+        )
 
     def log(self, parameters=None, metrics=None, tags=None, artifacts=None):
         """Registra evidências na execução ativa; métricas indefinidas são omitidas.
@@ -138,7 +214,7 @@ class ExperimentTracker:
         return info.model_uri
 
     def log_evaluation(self, run_id, reports, artifacts=None, parameters=None):
-        """Anexa avaliação final à execução que treinou o modelo.
+        """Anexa avaliação ao treino; run_id=None utiliza a execução já ativa.
 
         Exemplo:
             tracker.log_evaluation(
@@ -149,7 +225,7 @@ class ExperimentTracker:
         """
         if self.tracking_uri:
             mlflow.set_tracking_uri(self.tracking_uri)
-        with mlflow.start_run(run_id=run_id):
+        with mlflow.start_run(run_id=run_id) if run_id else nullcontext():
             metrics = {
                 f"{split}_{key}": value
                 for split, report in reports.items()
@@ -172,9 +248,25 @@ class ExperimentTracker:
             training_run_id = record["run_id"]
         """
         with self.run(name, parameters=parameters, tags=tags) as run:
-            model.fit(features, target)
+            self.fit_model(model, features, target)
             model_uri = self.log_model(model, features=features)
             return {"run_id": run.info.run_id, "model_uri": model_uri}
+
+    def fit_model(self, model, features, target):
+        """Ajusta o pipeline na execução ativa; permite avaliar antes de persistir.
+
+        Exemplo:
+            with tracker.run("candidato"):
+                tracker.fit_model(pipeline, X_train, y_train)
+        """
+        if mlflow.active_run() is None:
+            raise RuntimeError("Abra uma execução com tracker.run antes do ajuste.")
+        self.log(parameters={"train_rows": len(features)})
+        started = perf_counter()
+        try:
+            return model.fit(features, target)
+        finally:
+            self.log(metrics={"fit_duration_seconds": perf_counter() - started})
 
     def log_training_run(
         self,
