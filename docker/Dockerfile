@@ -8,13 +8,7 @@ RUN python -m venv "${VIRTUAL_ENV}"
 COPY requirements.txt /tmp/requirements.txt
 
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir --requirement /tmp/requirements.txt
-
-COPY requirements-ml-prep.txt /tmp/requirements-ml-prep.txt
-
-RUN pip install --no-cache-dir \
-    --index-url https://download.pytorch.org/whl/cpu \
-    --requirement /tmp/requirements-ml-prep.txt \
+    && pip install --no-cache-dir --no-compile --requirement /tmp/requirements.txt \
     && pip check
 
 

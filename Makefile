@@ -12,8 +12,10 @@ VENV_RUFF := $(VENV)/bin/ruff
 VENV_FLAKE8 := $(VENV)/bin/flake8
 VENV_PYTEST := $(VENV)/bin/pytest
 DEPENDENCIES_STAMP := $(VENV)/.dependencies-installed
+OPTIONAL_DEPENDENCIES_STAMP := $(VENV)/.ml-prep-dependencies-installed
 
 .PHONY: help install lint format format-check test check notebook docker-build docker-run
+.PHONY: install-ml-prep
 
 help: ## Exibe os comandos disponíveis
 	@awk 'BEGIN {FS = ":.*## "; printf "Uso: make <comando>\n\n"} /^[a-zA-Z_-]+:.*## / {printf "  %-14s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -21,14 +23,20 @@ help: ## Exibe os comandos disponíveis
 $(VENV_PYTHON):
 	$(PYTHON) -m venv $(VENV)
 
-$(DEPENDENCIES_STAMP): requirements.txt requirements-ml-prep.txt $(VENV_PYTHON)
+$(DEPENDENCIES_STAMP): requirements.txt $(VENV_PYTHON)
 	$(VENV_PYTHON) -m pip install --upgrade pip
 	$(VENV_PYTHON) -m pip install --requirement requirements.txt
-	$(VENV_PYTHON) -m pip install --requirement requirements-ml-prep.txt
 	$(VENV_PYTHON) -m pip check
 	@touch $(DEPENDENCIES_STAMP)
 
 install: $(DEPENDENCIES_STAMP) ## Cria o ambiente virtual e instala as dependências
+
+$(OPTIONAL_DEPENDENCIES_STAMP): requirements-ml-prep.txt $(DEPENDENCIES_STAMP)
+	$(VENV_PYTHON) -m pip install --requirement requirements.txt --requirement requirements-ml-prep.txt
+	$(VENV_PYTHON) -m pip check
+	@touch $(OPTIONAL_DEPENDENCIES_STAMP)
+
+install-ml-prep: $(OPTIONAL_DEPENDENCIES_STAMP) ## Instala também PyTorch e ONNX opcionais
 
 lint: install ## Verifica qualidade e conformidade PEP 8
 	$(VENV_RUFF) check .

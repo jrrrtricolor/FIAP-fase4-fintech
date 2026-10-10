@@ -1,2 +1,7 @@
-# O Docker instala esta versão pelo índice oficial de wheels CPU do PyTorch.
-torch==2.14.1
+# Opcionais do framework; não são necessários para os três notebooks.
+# Instalação: make install-ml-prep (inclui as dependências principais).
+# No Linux, usa explicitamente PyTorch CPU para evitar bibliotecas CUDA.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.14.1+cpu; sys_platform == "linux"
+torch==2.14.1; sys_platform != "linux"
+onnxruntime==1.31.0

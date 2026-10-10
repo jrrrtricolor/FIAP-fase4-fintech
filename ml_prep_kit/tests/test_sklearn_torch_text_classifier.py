@@ -3,14 +3,26 @@
 import unittest
 
 import numpy as np
+import pytest
 
-from ml_prep_kit import SklearnTorchTextClassifier
+pytest.importorskip("torch", reason="Opcional: execute make install-ml-prep.")
+
+from ml_prep_kit import SklearnTorchTextClassifier  # noqa: E402
 
 
 class SklearnTorchTextClassifierTest(unittest.TestCase):
-    """Valida treino, transformação e predição multiclasse."""
+    """Valida treino, transformação e predição multiclasse.
+
+    Exemplo:
+        pytest ml_prep_kit/tests/test_sklearn_torch_text_classifier.py
+    """
 
     def test_fit_predict_and_predict_proba(self) -> None:
+        """Verifica treino, probabilidades e codificação dos textos.
+
+        Exemplo:
+            pytest -k "SklearnTorchTextClassifierTest and fit_predict"
+        """
         texts = [
             "amostra alfa para classificacao",
             "registro alfa para treinamento",
@@ -52,6 +64,11 @@ class SklearnTorchTextClassifierTest(unittest.TestCase):
         self.assertEqual(set(classifier.classes_), set(targets))
 
     def test_fit_rejects_empty_text(self) -> None:
+        """Verifica a rejeição de textos vazios no treinamento.
+
+        Exemplo:
+            pytest -k test_fit_rejects_empty_text
+        """
         classifier = SklearnTorchTextClassifier(epochs=1)
 
         with self.assertRaisesRegex(ValueError, "Textos vazios"):

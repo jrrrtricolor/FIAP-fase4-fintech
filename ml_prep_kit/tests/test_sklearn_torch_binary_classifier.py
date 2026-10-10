@@ -4,8 +4,11 @@ import logging
 import unittest
 
 import numpy as np
+import pytest
 
-from ml_prep_kit import (
+pytest.importorskip("torch", reason="Opcional: execute make install-ml-prep.")
+
+from ml_prep_kit import (  # noqa: E402
     SklearnTorchBinaryClassifier,
     StructuredLoggingConfigurator,
 )
