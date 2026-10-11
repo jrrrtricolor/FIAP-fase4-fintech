@@ -327,7 +327,6 @@ class CreditMonitoring:
             artifacts=[directory],
         )
 
-
 def main():
     """Lê parâmetros do terminal e apresenta o resultado completo em JSON.
 
