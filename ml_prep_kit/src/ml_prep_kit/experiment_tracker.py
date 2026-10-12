@@ -397,6 +397,7 @@ class ExperimentTracker:
         registered_model_name: str,
         alias: str = "production",
         tags: dict[str, Any] | None = None,
+        rollback_alias: str = "production_rollback"
     ) -> str:
         """Promove e identifica a versão mais recente do modelo.
 
@@ -421,6 +422,16 @@ class ExperimentTracker:
             versions,
             key=lambda version: int(version.version),
         )
+
+        # Selecionar a versão atual em prod
+        current_version = next((v for v in versions if alias in v.aliases), None)
+
+        if (current_version is not None):
+            client.set_registered_model_alias(
+                registered_model_name, 
+                rollback_alias, 
+                current_version.version
+            )
 
         # Aplicar o alias na versão mais recente.
         client.set_registered_model_alias(

@@ -36,13 +36,20 @@ class ModelStore:
             tracking_uri=f"sqlite:///{directory}/mlflow.db"
         )
 
-    def export(self, dst_path):
+    def export(self, dst_path, alias="production"):
         registered_models = self.client.search_registered_models(
-            max_results=1,
             filter_string=f"name='{self.model_name}'"
         )
 
-        model_version = registered_models[0].latest_versions[0]
+        if (registered_models is None):
+            raise ValueError(f"No versions found for model '{self.model_name}'")
+
+        registered_model = next((r for r in registered_models if alias in r.aliases), None)
+
+        if (registered_model is None):
+            raise ValueError(f"Model '{self.model_name}' has no alias '{alias}'")
+
+        model_version = registered_model.latest_versions[0]
 
         mlflow.artifacts.download_artifacts(
             artifact_uri=model_version.source,
@@ -51,3 +58,4 @@ class ModelStore:
 
         with open(Path(dst_path).joinpath("version.txt"), "w", encoding="utf-8") as f:
             f.write(f"{model_version.version}\n")
+
