@@ -180,6 +180,36 @@ def create_app(
             inference_time_ms=inference_time_ms,
         )
 
+    @application.get("/income-types")
+    def income_types(
+        loaded_predictor: Annotated[
+            ModelPredictor,
+            Depends(require_predictor),
+        ],
+        request: Request,
+    ) -> list[str]:
+        return loaded_predictor.get_categorical_column_values("NAME_INCOME_TYPE")
+
+    @application.get("/education-types")
+    def education_types(
+        loaded_predictor: Annotated[
+            ModelPredictor,
+            Depends(require_predictor),
+        ],
+        request: Request,
+    ) -> list[str]:
+        return loaded_predictor.get_categorical_column_values("NAME_EDUCATION_TYPE")
+
+    @application.get("/housing-types")
+    def housing_types(
+        loaded_predictor: Annotated[
+            ModelPredictor,
+            Depends(require_predictor),
+        ],
+        request: Request,
+    ) -> list[str]:
+        return loaded_predictor.get_categorical_column_values("NAME_HOUSING_TYPE")
+    
     return application
 
 

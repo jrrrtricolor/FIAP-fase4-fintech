@@ -205,6 +205,26 @@ class ModelPredictor:
 
         self.preprocessor = joblib.load(artifact_path)
 
+    def get_categorical_column_values(self, column_name: str) -> list[str]:
+        """
+        Retorna os valores únicos encontrados durante o treinamento 
+        para uma coluna categórica específica.
+        """
+
+        preprocessor = self.model['preprocessor']
+        categorical_transformers = preprocessor['cat']
+        categorical_store = categorical_transformers['categorical_store']
+
+        feature_names = categorical_store.categories.get(column_name)
+
+        if feature_names is None:
+            raise ValueError(
+                "Nenhum armazenamento categórico "
+                f"encontrado para a coluna: {column_name}"
+            )
+    
+        return feature_names
+
     def prepare_input(self, X: Any) -> Any:
         """Aplica o preprocessador quando ele estiver configurado.
 
