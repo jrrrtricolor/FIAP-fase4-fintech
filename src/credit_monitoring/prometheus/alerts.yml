@@ -53,3 +53,59 @@ groups:
         annotations:
           summary: "Drift detectado no campo de idade em anos {{ $labels.instance }}"
           description: "Valor atual é {{ $value }}, com desvio >3σ a partir da semana anterior."
+
+  - name: credit_monitoring_income_drift
+    rules:
+      # 1. Record the current rate of the summary sum over a 5-minute window
+      - record: job:referencia_de_renda_sum:rate5m
+        expr: sum(rate(referencia_de_renda_sum[5m])) by (job, instance)
+
+      # 2. Record the historical weekly baseline (mean and standard deviation over past weeks or 1w offset)
+      - record: job:referencia_de_renda_sum:mean_1w
+        expr: avg_over_time(job:referencia_de_renda_sum:rate5m[1w] offset 1w)
+
+      - record: job:referencia_de_renda_sum:stddev_1w
+        expr: stddev_over_time(job:referencia_de_renda_sum:rate5m[1w] offset 1w)
+
+      # 3. Alert rule: trigger if the current value deviates by more than ±3σ from the 1-week historical baseline
+      - alert: SummaryMetricWeeklyAnomaly
+        expr: |
+          abs(
+            job:referencia_de_renda_sum:rate5m
+            -
+            job:referencia_de_renda_sum:mean_1w
+          ) > (3 * job:referencia_de_renda_sum:stddev_1w)
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Drift detectado no campo de renda {{ $labels.instance }}"
+          description: "Valor atual é {{ $value }}, com desvio >3σ a partir da semana anterior."
+
+  - name: credit_monitoring_credit_drift
+    rules:
+      # 1. Record the current rate of the summary sum over a 5-minute window
+      - record: job:referencia_de_credito_sum:rate5m
+        expr: sum(rate(referencia_de_credito_sum[5m])) by (job, instance)
+
+      # 2. Record the historical weekly baseline (mean and standard deviation over past weeks or 1w offset)
+      - record: job:referencia_de_credito_sum:mean_1w
+        expr: avg_over_time(job:referencia_de_credito_sum:rate5m[1w] offset 1w)
+
+      - record: job:referencia_de_credito_sum:stddev_1w
+        expr: stddev_over_time(job:referencia_de_credito_sum:rate5m[1w] offset 1w)
+
+      # 3. Alert rule: trigger if the current value deviates by more than ±3σ from the 1-week historical baseline
+      - alert: SummaryMetricWeeklyAnomaly
+        expr: |
+          abs(
+            job:referencia_de_credito_sum:rate5m
+            -
+            job:referencia_de_credito_sum:mean_1w
+          ) > (3 * job:referencia_de_credito_sum:stddev_1w)
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Drift detectado no campo de valor de crédito {{ $labels.instance }}"
+          description: "Valor atual é {{ $value }}, com desvio >3σ a partir da semana anterior."
