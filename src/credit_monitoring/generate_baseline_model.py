@@ -9,6 +9,9 @@ from ml_prep_kit import (
     ModelEvaluator,
     ModelFactory,
 )
+from .api_constants import (
+    MLFLOW_MODEL_NAME
+)
 
 def main():
     project_root = Path.cwd()
@@ -92,6 +95,11 @@ def main():
             "random_state": preparation.random_state,
             "sample_size": preparation.sample_size,
         },
+    )
+
+    tracker.register_model(baseline_record["model_uri"], MLFLOW_MODEL_NAME)
+    tracker.promote_latest_model_version(
+        registered_model_name=MLFLOW_MODEL_NAME
     )
 
 if __name__ == "__main__":

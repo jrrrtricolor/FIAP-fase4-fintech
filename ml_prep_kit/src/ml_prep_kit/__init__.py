@@ -14,6 +14,7 @@ _EXPORTS = {
     "ModelEvaluator": ("model_evaluator", "ModelEvaluator"),
     "ModelFactory": ("model_factory", "ModelFactory"),
     "ModelPredictor": ("model_predictor", "ModelPredictor"),
+    "ModelStore": ("model_store", "ModelStore"),
     "SklearnTorchBinaryClassifier": (
         "sklearn_torch_binary_classifier",
         "SklearnTorchBinaryClassifier",

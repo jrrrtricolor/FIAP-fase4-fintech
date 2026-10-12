@@ -150,6 +150,25 @@ class ModelPredictor:
         return cls(model=model, preprocessor=preprocessor)
 
     @classmethod
+    def from_pkl(cls, model_file: str | Path) -> "ModelPredictor":
+        """Carrega um pipeline local serializado com Pkl.
+
+        Exemplo:
+            predictor = ModelPredictor.from_pkl("model/pipeline.pkl")
+        """
+        import pickle
+        data = None
+
+        # Open the file in read-binary mode
+        with open(model_file, 'rb') as file:
+            data = pickle.load(file)
+
+        if (data == None):
+            raise ValueError("Failed loading pkl model")
+
+        return cls(model=data)
+
+    @classmethod
     def from_joblib(cls, model_path: str | Path) -> "ModelPredictor":
         """Carrega um pipeline local serializado com Joblib.
 

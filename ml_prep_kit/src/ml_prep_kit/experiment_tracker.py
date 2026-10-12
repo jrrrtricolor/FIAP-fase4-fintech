@@ -387,6 +387,11 @@ class ExperimentTracker:
 
             return run.info.run_id
 
+    def register_model(self, model_uri, model_name):
+        mlflow.register_model(
+            model_uri=model_uri, name=model_name
+        )
+
     def promote_latest_model_version(
         self,
         registered_model_name: str,
