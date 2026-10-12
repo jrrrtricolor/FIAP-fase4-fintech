@@ -21,6 +21,9 @@ from .prometheus.metrics import (
     PREDICTION_CONFIDENCE,
     PREDICTION_DURATION,
     PREDICTIONS_TOTAL,
+    REFERENCE_MODEL_AGE_YEARS,
+    REFERENCE_MODEL_AMT_CREDIT,
+    REFERENCE_MODEL_AMT_INCOME_TOTAL,
 )
 from .api_constants import (
     DEFAULT_MODEL_FILE,
@@ -173,6 +176,10 @@ def create_app(
         PREDICTION_DURATION.observe(inference_time_ms / 1_000)
         PREDICTIONS_TOTAL.inc()
         PREDICTION_CONFIDENCE.observe(max(probabilities))
+        
+        REFERENCE_MODEL_AGE_YEARS.observe(payload.AGE_YEARS)
+        REFERENCE_MODEL_AMT_CREDIT.observe(payload.AMT_CREDIT)
+        REFERENCE_MODEL_AMT_INCOME_TOTAL.observe(payload.AMT_INCOME_TOTAL)
 
         return PredictionResponse(
             credit_score=score,

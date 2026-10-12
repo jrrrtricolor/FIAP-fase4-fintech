@@ -1,4 +1,4 @@
-from prometheus_client import Counter, Gauge, Histogram
+from prometheus_client import Counter, Gauge, Histogram, Summary
 
 PREDICTIONS_TOTAL = Counter(
     "total_de_predicoes",
@@ -21,4 +21,22 @@ MODEL_INFO = Gauge(
     "modelo_info",
     "Identifica a versão do modelo carregado pela API",
     labelnames=("version",),
+)
+
+REFERENCE_MODEL_AMT_INCOME_TOTAL = Summary(
+    "referencia_de_renda",
+    "Summary de valores de renda do modelo em produção",
+    labelnames=['ref_amt_income']
+
+)
+REFERENCE_MODEL_AMT_CREDIT = Summary(
+    "referencia_de_credito",
+    "Summary de valores de credito do modelo em produção",
+    labelnames=['ref_amt_credit']
+
+)
+REFERENCE_MODEL_AGE_YEARS = Summary(
+    "referencia_de_idades_em_anos",
+    "Summary de valores de idade em anos do modelo em produção",
+    labelnames=['ref_age_years']
 )

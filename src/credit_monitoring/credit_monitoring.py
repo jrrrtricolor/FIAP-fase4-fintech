@@ -35,7 +35,6 @@ from .api_constants import (
 MODEL_PARAMETERS = {"max_iter": 2_000, "class_weight": "balanced"}
 EXPERIMENT_NAME = "tech-challenge-4-credit-monitoring"
 
-
 def run_workflow(processed_dir, data_path=None, **drift_parameters):
     """Executa o monitoramento; os alertas determinam a necessidade de retreinar.
 
