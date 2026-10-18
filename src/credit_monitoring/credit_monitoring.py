@@ -35,15 +35,21 @@ from .api_constants import (
 MODEL_PARAMETERS = {"max_iter": 2_000, "class_weight": "balanced"}
 EXPERIMENT_NAME = "tech-challenge-4-credit-monitoring"
 
-def run_workflow(processed_dir, data_path=None, **drift_parameters):
+
+def run_workflow(processed_dir, data_path=None, recovery=False, **drift_parameters):
     """Executa o monitoramento; os alertas determinam a necessidade de retreinar.
 
     Exemplo:
         result = run_workflow("data/processed", drift_share=0.20)
     """
-    workflow = CreditMonitoring(processed_dir, data_path, drift_parameters)
+    if recovery and data_path is not None:
+        raise ValueError("Use --data ou --recovery-demo, separadamente.")
+    source = Path(processed_dir) / "credit_scoring.csv" if recovery else data_path
+    workflow = CreditMonitoring(processed_dir, source, drift_parameters)
     with workflow.tracker.workflow("credit_monitoring", workflow.result):
         workflow.step("carga", workflow.load_data)
+        if recovery:
+            workflow.step("simulacao", workflow.prepare_recovery)
         workflow.step("limpeza_e_contrato", workflow.clean_data)
         # Comparar as entradas antes de aprender uma nova normalização.
         workflow.step("deteccao_de_drift", workflow.detect_drift)
@@ -111,6 +117,23 @@ class CreditMonitoring:
             "sample_size": len(self.frame),
         }
         self.tracker.log(tags=self.tags, metrics={"input_rows": len(self.frame)})
+
+    def prepare_recovery(self):
+        """Reutiliza o cenário de concept drift, preservando features e partições.
+
+        Exemplo:
+            workflow.prepare_recovery()
+        """
+        scenarios, metadata = self.data.scenarios(
+            self.frame, self.baseline["partitions"]["treino"]
+        )
+        self.frame = scenarios["concept_drift"]
+        self.result["simulation"] = {
+            "scenario": "concept_drift",
+            "probability": 0.5,
+            **metadata,
+        }
+        self.tracker.log(parameters=self.result["simulation"])
 
     def clean_data(self):
         """Limpa categorias, aplica o contrato e preserva os IDs de cada partição.
@@ -355,6 +378,7 @@ def main():
     parser.add_argument("--ks-threshold", type=float, default=0.01)
     parser.add_argument("--psi-threshold", type=float, default=0.20)
     parser.add_argument("--drift-share", type=float, default=0.20)
+    parser.add_argument("--recovery-demo", dest="recovery", action="store_true")
     result = run_workflow(**vars(parser.parse_args()))
     print(json.dumps(result, indent=2, ensure_ascii=False))
 

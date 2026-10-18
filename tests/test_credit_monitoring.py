@@ -506,3 +506,35 @@ def test_fit_requires_tracking_before_modifying_model(tmp_path):
     with pytest.raises(RuntimeError, match="tracker.run"):
         tracker.fit_model(model, [[0], [1]], [0, 1])
     model.fit.assert_not_called()
+
+
+def test_recovery_preserves_baseline_and_partition_features(baseline):
+    """Executa a recuperação sem v2, preservando a referência e os IDs das partições.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k recovery_preserves
+    """
+    data, directory, _ = baseline
+    original_hash = data.source_hash(directory / "experiment.joblib")
+    result = run_workflow(directory, recovery=True, auc_drop_threshold=0.001)
+    original = data.load_experiment(directory)["partitions"]
+    candidate = data.load_experiment(result["output_dir"])["partitions"]
+    columns = ["SK_ID_CURR", *data.features]
+    assert not (directory / "credit_scoring_v2.csv").exists()
+    assert result["alerts"] == {"drift_alert": 0, "performance_alert": 1}
+    assert result["simulation"]["changed_labels"] > 0
+    assert data.source_hash(directory / "experiment.joblib") == original_hash
+    for name, part in candidate.items():
+        expected = original[name][columns].reset_index(drop=True)
+        pd.testing.assert_frame_equal(part[columns], expected, rtol=1e-12)
+
+
+def test_recovery_rejects_ambiguous_input(tmp_path):
+    """Impede substituir silenciosamente o CSV informado pela versão simulada.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k ambiguous_input
+    """
+    with pytest.raises(ValueError, match="separadamente"):
+        run_workflow(tmp_path, data_path="current.csv", recovery=True)
+    assert not (tmp_path / "credit_monitoring").exists()
