@@ -7,7 +7,53 @@ import joblib
 import numpy as np
 import pandas as pd
 import pandera.pandas as pa
+from pandera.typing import Series
 from sklearn.model_selection import train_test_split
+
+POSITIVE_CHECK = [pa.Check.gt(0), pa.Check(np.isfinite, name="valor_finito")]
+
+TARGET = "TARGET"
+NUMERIC_FEATURES = [
+    "AGE_YEARS",
+    "AMT_INCOME_TOTAL",
+    "AMT_CREDIT",
+    "AMT_ANNUITY",
+    "CNT_CHILDREN",
+]
+CATEGORICAL_FEATURES = [
+    "NAME_INCOME_TYPE",
+    "NAME_EDUCATION_TYPE",
+    "NAME_HOUSING_TYPE",
+]
+BINARY_FEATURES = ["FLAG_OWN_CAR", "FLAG_OWN_REALTY"]
+FEATURES = NUMERIC_FEATURES + CATEGORICAL_FEATURES + BINARY_FEATURES
+SOURCE_COLUMNS = ["SK_ID_CURR", "TARGET", "DAYS_BIRTH", *FEATURES[1:]]
+
+class HomeCreditDataV1Schema(pa.DataFrameModel):
+    AGE_YEARS: Series[int] = pa.Field(in_range={"min_value": 18, "max_value": 100})
+    AMT_INCOME_TOTAL: Series[float] = pa.Field(ge=0, coerce=True)
+    AMT_CREDIT: Series[float] = pa.Field(ge=0, coerce=True)
+    AMT_ANNUITY: Series[float] = pa.Field(ge=0, coerce=True, nullable=True)
+    CNT_CHILDREN: Series[int] = pa.Field(ge=0)
+    
+    NAME_INCOME_TYPE: Series[str] = pa.Field(str_matches=r".*\S.*")
+    NAME_EDUCATION_TYPE: Series[str] = pa.Field(str_matches=r".*\S.*")
+    NAME_HOUSING_TYPE: Series[str] = pa.Field(str_matches=r".*\S.*")
+
+    FLAG_OWN_CAR: Series[int] = pa.Field(isin=[0, 1])
+    FLAG_OWN_REALTY: Series[int] = pa.Field(isin=[0, 1])
+
+    @pa.check("AMT_INCOME_TOTAL", name="check_finite")
+    def check_amt_income_total_finite(cls, series: pd.Series) -> pd.Series:
+        return np.isfinite(series)
+
+    @pa.check("AMT_CREDIT", name="check_finite")
+    def check_amt_credit_finite(cls, series: pd.Series) -> pd.Series:
+        return np.isfinite(series)
+
+    @pa.check("AMT_ANNUITY", name="check_finite")
+    def check_amt_annuity_finite(cls, series: pd.Series) -> pd.Series:
+        return np.isfinite(series)
 
 
 class HomeCreditData:
@@ -22,23 +68,6 @@ class HomeCreditData:
         partitions = data.split(prepared)
     """
 
-    target = "TARGET"
-    numeric_features = [
-        "AGE_YEARS",
-        "AMT_INCOME_TOTAL",
-        "AMT_CREDIT",
-        "AMT_ANNUITY",
-        "CNT_CHILDREN",
-    ]
-    categorical_features = [
-        "NAME_INCOME_TYPE",
-        "NAME_EDUCATION_TYPE",
-        "NAME_HOUSING_TYPE",
-    ]
-    binary_features = ["FLAG_OWN_CAR", "FLAG_OWN_REALTY"]
-    features = numeric_features + categorical_features + binary_features
-    source_columns = ["SK_ID_CURR", "TARGET", "DAYS_BIRTH", *features[1:]]
-
     def __init__(self, sample_size=20_000, random_state=42):
         """Configura a amostragem e o contrato de validação das colunas preparadas.
 
@@ -47,23 +76,12 @@ class HomeCreditData:
         """
         self.sample_size = sample_size
         self.random_state = random_state
-        positive = [pa.Check.gt(0), pa.Check(np.isfinite, name="valor_finito")]
-        columns = {
+        self.contract = HomeCreditDataV1Schema.to_schema()
+
+        self.contract.add_columns({
             "SK_ID_CURR": pa.Column(int, unique=True),
             "TARGET": pa.Column(int, pa.Check.isin([0, 1]), required=False),
-            "AGE_YEARS": pa.Column(float, pa.Check.in_range(18, 100)),
-            "AMT_INCOME_TOTAL": pa.Column(float, positive, coerce=True),
-            "AMT_CREDIT": pa.Column(float, positive, coerce=True),
-            "AMT_ANNUITY": pa.Column(float, positive, nullable=True, coerce=True),
-            "CNT_CHILDREN": pa.Column(int, pa.Check.ge(0)),
-        }
-        for name in self.categorical_features:
-            columns[name] = pa.Column(str, pa.Check.str_matches(r".*\S.*"))
-        for name in self.binary_features:
-            columns[name] = pa.Column(int, pa.Check.isin([0, 1]))
-        self.contract = pa.DataFrameSchema(
-            columns, strict=True, name="credit_scoring_v1"
-        )
+        })
 
     def sample(self, frame):
         """Seleciona amostra estratificada pelo alvo e ordenada por identificador.
@@ -74,7 +92,8 @@ class HomeCreditData:
         """
         if frame["SK_ID_CURR"].isna().any() or frame["SK_ID_CURR"].duplicated().any():
             raise ValueError("Identificadores devem ser preenchidos e únicos.")
-        if frame[self.target].isna().any() or set(frame[self.target].unique()) != {
+        
+        if frame[TARGET].isna().any() or set(frame[TARGET].unique()) != {
             0,
             1,
         }:
@@ -82,13 +101,13 @@ class HomeCreditData:
         if len(frame) < self.sample_size:
             raise ValueError("A base é menor que a amostra solicitada.")
         selected = frame.copy()
-        if len(frame) > self.sample_size:
+        if len(CATEGORICAL_FEATURES) > self.sample_size:
             selected, _ = train_test_split(
                 frame,
                 train_size=self.sample_size,
-                stratify=frame[self.target],
+                stratify=frame[TARGET],
                 random_state=self.random_state,
-            )
+        )
         return selected.sort_values("SK_ID_CURR").reset_index(drop=True)
 
     def prepare(self, frame):
@@ -100,13 +119,13 @@ class HomeCreditData:
         """
         prepared = frame.copy()
         prepared["AGE_YEARS"] = -prepared.pop("DAYS_BIRTH") / 365.25
-        for name in self.categorical_features:
+        for name in CATEGORICAL_FEATURES:
             prepared[name] = prepared[name].str.strip().astype(object)
-        for name in self.binary_features:
+        for name in BINARY_FEATURES:
             prepared[name] = prepared[name].map({"Y": 1, "N": 0})
-        columns = ["SK_ID_CURR", self.target, *self.features]
-        if self.target not in prepared:
-            columns.remove(self.target)
+        columns = ["SK_ID_CURR", TARGET, *FEATURES]
+        if TARGET not in prepared:
+            columns.remove(TARGET)
         return self.contract.validate(prepared[columns], lazy=True)
 
     def split(self, frame):
@@ -120,19 +139,19 @@ class HomeCreditData:
         development, production = train_test_split(
             frame,
             test_size=0.2,
-            stratify=frame[self.target],
+            stratify=frame[TARGET],
             random_state=self.random_state,
         )
         train, evaluation = train_test_split(
             development,
             test_size=0.25,
-            stratify=development[self.target],
+            stratify=development[TARGET],
             random_state=self.random_state,
         )
         validation, test = train_test_split(
             evaluation,
             test_size=0.5,
-            stratify=evaluation[self.target],
+            stratify=evaluation[TARGET],
             random_state=self.random_state,
         )
         partitions = {
@@ -168,7 +187,7 @@ class HomeCreditData:
         prepared = self._clean_version(frame)
         partitions = self._align_version(prepared, reference_partitions)
         self.validate_partitions(partitions)
-        if set(partitions["treino"][self.target].unique()) != {0, 1}:
+        if set(partitions["treino"][TARGET].unique()) != {0, 1}:
             raise ValueError("O treino exige exemplos das duas classes do TARGET.")
         return partitions
 
@@ -181,7 +200,7 @@ class HomeCreditData:
         """
         self.validate_partitions(partitions)
         return {
-            name: (part[self.features], part[self.target])
+            name: (part[FEATURES], part[TARGET])
             for name, part in partitions.items()
             if name != "producao"
         }
@@ -193,10 +212,10 @@ class HomeCreditData:
             prepared = data._clean_version(version_two)
         """
         prepared = frame.copy(deep=True)
-        for name in self.categorical_features:
+        for name in CATEGORICAL_FEATURES:
             prepared[name] = prepared[name].str.strip().astype(object)
         prepared = self.contract.validate(prepared, lazy=True)
-        if self.target not in prepared:
+        if TARGET not in prepared:
             raise ValueError("O treinamento da nova versão exige TARGET.")
         return prepared
 
@@ -305,11 +324,11 @@ class HomeCreditData:
         rng = np.random.default_rng(self.random_state)
         changed = (
             production["AMT_INCOME_TOTAL"].ge(cutoff)
-            & production[self.target].eq(0)
+            & production[TARGET].eq(0)
             & (rng.random(len(production)) < 0.5)
         )
         concept = production.copy()
-        concept.loc[changed, self.target] = 1
+        concept.loc[changed, TARGET] = 1
         invalid = production.head(20).copy()
         invalid.iloc[0, invalid.columns.get_loc("AMT_INCOME_TOTAL")] = np.nan
         invalid.iloc[1, invalid.columns.get_loc("AGE_YEARS")] = -5

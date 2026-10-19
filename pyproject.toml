@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Monitoramento e analise de credito"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "fastapi (==0.136.3)",
+    "fastapi[standard] (>=0.146.0,<0.147.0)",
     "numpy (==2.5.3)",
     "onnxruntime>=1.29,<2.0",
     "prometheus-client>=0.21,<1.0",

@@ -1,4 +1,3 @@
-import sys
 from pathlib import Path
 
 from ml_prep_kit import (
@@ -9,9 +8,9 @@ from ml_prep_kit import (
     ModelEvaluator,
     ModelFactory,
 )
-from .api_constants import (
-    MLFLOW_MODEL_NAME
-)
+
+from .api_constants import MLFLOW_MODEL_NAME
+
 
 def main():
     project_root = Path.cwd()

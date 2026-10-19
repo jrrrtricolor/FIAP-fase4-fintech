@@ -11,6 +11,7 @@ __path__.append(str(_PACKAGE_DIR))
 _EXPORTS = {
     "DriftMonitor": ("drift_monitor", "DriftMonitor"),
     "HomeCreditData": ("home_credit_data", "HomeCreditData"),
+    "HomeCreditDataV1Schema": ("home_credit_data", "HomeCreditDataV1Schema"),
     "CategoricalStore": ("categorical_store", "CategoricalStore"),
     "CSVDataLoader": ("csv_data_loader", "CSVDataLoader"),
     "DataValidator": ("data_validator", "DataValidator"),
@@ -19,7 +20,6 @@ _EXPORTS = {
     "ModelEvaluator": ("model_evaluator", "ModelEvaluator"),
     "ModelFactory": ("model_factory", "ModelFactory"),
     "ModelPredictor": ("model_predictor", "ModelPredictor"),
-    "ModelStore": ("model_store", "ModelStore"),
     "SklearnTorchBinaryClassifier": (
         "sklearn_torch_binary_classifier",
         "SklearnTorchBinaryClassifier",

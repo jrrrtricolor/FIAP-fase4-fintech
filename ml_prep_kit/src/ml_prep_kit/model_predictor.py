@@ -163,7 +163,7 @@ class ModelPredictor:
         with open(model_file, 'rb') as file:
             data = pickle.load(file)
 
-        if (data == None):
+        if (data is None):
             raise ValueError("Failed loading pkl model")
 
         return cls(model=data)

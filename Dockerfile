@@ -31,8 +31,7 @@ RUN poetry install --only main --no-root --no-ansi \
 FROM python-base AS runtime
 
 ENV PATH="/app/.venv/bin:$PATH" \
-    PYTHONPATH="/app:/app/src" \
-    MODEL_PATH="/app/model/model.pkl"
+    PYTHONPATH="/app:/app/src"
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends locales \
@@ -48,7 +47,7 @@ ENV LANG=en_US.UTF-8 \
 COPY --from=builder /app/.venv /app/.venv
 COPY --chown=app:app src ./src
 COPY --chown=app:app ml_prep_kit ./ml_prep_kit
-COPY --chown=app:app ./model ./model
+COPY --chown=app:app ./data/processed/monitoring ./data/processed/monitoring
 
 USER app
 

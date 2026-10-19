@@ -28,9 +28,8 @@ from ml_prep_kit import (
     ModelPredictor,
     VisualizationReporter,
 )
-from .api_constants import (
-    MLFLOW_MODEL_NAME
-)
+
+from .api_constants import MLFLOW_MODEL_NAME
 
 MODEL_PARAMETERS = {"max_iter": 2_000, "class_weight": "balanced"}
 EXPERIMENT_NAME = "tech-challenge-4-credit-monitoring"

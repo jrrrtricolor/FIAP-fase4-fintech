@@ -1,11 +1,10 @@
-import sys
-from datetime import UTC, datetime
 from pathlib import Path
 
 from ml_prep_kit import (
     CSVDataLoader,
     HomeCreditData,
 )
+
 
 def main():
     project_root = Path.cwd()

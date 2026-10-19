@@ -5,15 +5,16 @@ import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated
-import pandas as pd
+from typing import Annotated, cast
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
+from pandera.typing import DataFrame
 from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import BaseModel
 
-from ml_prep_kit import ModelPredictor
+from ml_prep_kit import HomeCreditDataV1Schema, ModelPredictor
 
+from .api_constants import MLFLOW_MODEL_NAME
 from .config.api_logging_middleware import LoggingMiddleware
 from .config.logging_config import setup_api_logger
 from .prometheus.metrics import (
@@ -25,69 +26,39 @@ from .prometheus.metrics import (
     REFERENCE_MODEL_AMT_CREDIT,
     REFERENCE_MODEL_AMT_INCOME_TOTAL,
 )
-from .api_constants import (
-    DEFAULT_MODEL_FILE,
-    DEFAULT_MODEL_PATH
-)
+
 
 class PredictionRequest(BaseModel):
-    AGE_YEARS: int
-    AMT_INCOME_TOTAL: float
-    AMT_CREDIT: float
-    AMT_ANNUITY: float
-    CNT_CHILDREN: int
-    
-    NAME_INCOME_TYPE: str
-    NAME_EDUCATION_TYPE: str
-    NAME_HOUSING_TYPE: str
-    
-    FLAG_OWN_CAR: bool
-    FLAG_OWN_REALTY: bool
-
-    def to_dict(self):
-        return {
-            "AGE_YEARS": self.AGE_YEARS,
-            "AMT_INCOME_TOTAL": self.AMT_INCOME_TOTAL,
-            "AMT_CREDIT": self.AMT_CREDIT,
-            "AMT_ANNUITY": self.AMT_ANNUITY,
-            "CNT_CHILDREN": self.CNT_CHILDREN,
-            "NAME_INCOME_TYPE": self.NAME_INCOME_TYPE,
-            "NAME_EDUCATION_TYPE": self.NAME_EDUCATION_TYPE,
-            "NAME_HOUSING_TYPE": self.NAME_HOUSING_TYPE,
-            "FLAG_OWN_CAR": self.FLAG_OWN_CAR,
-            "FLAG_OWN_REALTY": self.FLAG_OWN_REALTY,
-        }
+    prediction_data: DataFrame[HomeCreditDataV1Schema]
 
 class PredictionResponse(BaseModel):
     """Classificação e probabilidades retornadas ao cliente."""
 
-    credit_score: float
+    credit_scores: list[float]
     model_version: str
     inference_time_ms: float
 
 
 ModelLoader = Callable[[], tuple[ModelPredictor, str]]
+
 LOGGER = setup_api_logger()
+DEFAULT_TRACKING_FILE = Path.joinpath(
+    Path.cwd(), "data", "processed", "monitoring", "mlflow.db"
+)
+DEFAULT_TRACKING_URI = f"sqlite:///{DEFAULT_TRACKING_FILE}"
+DEFAULT_MODEL_URI = f"models:/{MLFLOW_MODEL_NAME}@production"
 
 def load_model() -> tuple[ModelPredictor, str]:
     """Carrega uma única vez o modelo."""
-    model_path = Path(os.getenv("MODEL_PATH", DEFAULT_MODEL_FILE))
-
-    if not model_path.is_file():
-        raise FileNotFoundError(f"Artefato de inferência ausente: {model_path}.")
+    version = os.getenv("MODEL_VERSION", "")
+    model_uri = os.getenv("MODEL_URI", DEFAULT_MODEL_URI)
+    tracking_uri = os.getenv("MLFLOW_TRACKING_URI", DEFAULT_TRACKING_URI)
     
-    if model_path.suffix != ".pkl":
-        raise ValueError("MODEL_PATH deve apontar para um artefato .pkl.")
-    
-    predictor = ModelPredictor.from_pkl(
-        model_path,
+    predictor = ModelPredictor.from_mlflow(
+        model_uri=model_uri,
+        tracking_uri=tracking_uri,
     )
 
-    version = None
-
-    with open(Path(DEFAULT_MODEL_PATH).joinpath("version.txt"), "r", encoding="utf-8") as file:
-        version = file.read().strip()
-    
     return predictor, version
 
 def create_app(
@@ -104,6 +75,7 @@ def create_app(
             loaded_predictor, loaded_version = model_loader()
             application.state.predictor = loaded_predictor
             application.state.model_version = loaded_version
+
         MODEL_INFO.labels(version=application.state.model_version).set(1)
         yield
 
@@ -116,6 +88,7 @@ def create_app(
     application.state.model_version = model_version
     if predictor is not None:
         MODEL_INFO.labels(version=model_version).set(1)
+
     application.add_middleware(LoggingMiddleware)
     Instrumentator().instrument(application).expose(
         application,
@@ -158,9 +131,10 @@ def create_app(
     ) -> PredictionResponse:
         """Retorna o score para um perfil"""
         started_at = time.perf_counter()
-        requests = pd.DataFrame([payload.to_dict()])
-        score = loaded_predictor.predict(requests)[0]
-        probabilities = loaded_predictor.predict_proba(requests)[0]
+        requests = payload.prediction_data
+
+        scores = loaded_predictor.positive_scores(requests)
+        probabilities = loaded_predictor.predict_proba(requests)
 
         inference_time_ms = (time.perf_counter() - started_at) * 1_000
 
@@ -168,21 +142,38 @@ def create_app(
             "predicao_gerada",
             extra={
                 "duracao_ms": inference_time_ms,
-                "confianca": max(probabilities),
-                "score": score,
+                "confiancas": list(map(max, probabilities)),
+                "scores": scores,
             },
         )
 
         PREDICTION_DURATION.observe(inference_time_ms / 1_000)
         PREDICTIONS_TOTAL.inc()
-        PREDICTION_CONFIDENCE.observe(max(probabilities))
-        
-        REFERENCE_MODEL_AGE_YEARS.observe(payload.AGE_YEARS)
-        REFERENCE_MODEL_AMT_CREDIT.observe(payload.AMT_CREDIT)
-        REFERENCE_MODEL_AMT_INCOME_TOTAL.observe(payload.AMT_INCOME_TOTAL)
+
+        for probas in probabilities:
+            PREDICTION_CONFIDENCE.observe(max(probas))
+
+        for data in requests.itertuples():
+            (
+                REFERENCE_MODEL_AGE_YEARS
+                .labels("AGE_YEARS")
+                .observe(cast(float, data.AGE_YEARS))
+            )
+
+            (
+                REFERENCE_MODEL_AMT_CREDIT
+                .labels("AMT_CREDIT")
+                .observe(cast(float, data.AMT_CREDIT))
+            )
+
+            (
+                REFERENCE_MODEL_AMT_INCOME_TOTAL
+                .labels("AMT_INCOME_TOTAL")
+                .observe(cast(float, data.AMT_INCOME_TOTAL))
+            )
 
         return PredictionResponse(
-            credit_score=score,
+            credit_scores=scores,
             model_version=request.app.state.model_version,
             inference_time_ms=inference_time_ms,
         )
