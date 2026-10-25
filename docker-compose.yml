@@ -13,15 +13,13 @@ x-airflow-common:
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
     AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: 'true'
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-api-server:8080/execution/
+    MLFLOW_TRACKING_URI: sqlite:////app/data/processed/monitoring/mlflow.db
   volumes:
     - ${AIRFLOW_PROJ_DIR:-.}/airflow/dags:/opt/airflow/dags
     - ${AIRFLOW_PROJ_DIR:-.}/airflow/logs:/opt/airflow/logs
     - ${AIRFLOW_PROJ_DIR:-.}/airflow/config:/opt/airflow/config
     - ${AIRFLOW_PROJ_DIR:-.}/airflow/plugins:/opt/airflow/plugins
     - ${AIRFLOW_PROJ_DIR:-.}/data:/app/data
-    - ${AIRFLOW_PROJ_DIR:-.}/model:/app/model
-    - ${AIRFLOW_PROJ_DIR:-.}/mldb:/app/mldb
-    - ${AIRFLOW_PROJ_DIR:-.}/mlruns:/app/mlruns
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
     &airflow-common-depends-on
@@ -96,6 +94,8 @@ services:
       - |
         mkdir -p /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins /opt/airflow/config
         chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins /opt/airflow/config
+        mkdir -p /app/data/processed
+        chown -R "${AIRFLOW_UID:-50000}:0" /app/data/processed
         exec /entrypoint airflow version
     environment:
       <<: *airflow-common-env
@@ -108,18 +108,17 @@ services:
       context: .
       dockerfile: Dockerfile
     image: credit_monitoring:latest
-    container_name: credit_monitoring
     ports:
       - "8000:8000"
     restart: unless-stopped
+    user: "${AIRFLOW_UID:-50000}:0"
+    environment:
+      MLFLOW_TRACKING_URI: sqlite:////app/data/processed/monitoring/mlflow.db
     volumes:
-      - ${AIRFLOW_PROJ_DIR:-.}/model:/app/model
-      - ${AIRFLOW_PROJ_DIR:-.}/mldb:/app/mldb
-      - ${AIRFLOW_PROJ_DIR:-.}/mlruns:/app/mlruns
+      - ${AIRFLOW_PROJ_DIR:-.}/data/processed:/app/data/processed
 
   prometheus:
     image: prom/prometheus:v3.14.0
-    container_name: prometheus
     volumes:
       - ./src/credit_monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./src/credit_monitoring/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
@@ -138,7 +137,6 @@ services:
 
   grafana:
     image: grafana/grafana:13.2.0
-    container_name: grafana
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}

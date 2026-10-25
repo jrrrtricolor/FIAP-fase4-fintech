@@ -388,77 +388,116 @@ class ExperimentTracker:
             return run.info.run_id
 
     def register_model(self, model_uri, model_name):
-        mlflow.register_model(
-            model_uri=model_uri, name=model_name
-        )
+        """Registra o artefato e devolve a versão exata, sem promovê-la.
+
+        Exemplo:
+            version = tracker.register_model(record["model_uri"], "credito")
+        """
+        if self.tracking_uri:
+            mlflow.set_tracking_uri(self.tracking_uri)
+        return mlflow.register_model(model_uri=model_uri, name=model_name)
 
     def promote_latest_model_version(
         self,
         registered_model_name: str,
         alias: str = "production",
         tags: dict[str, Any] | None = None,
-        rollback_alias: str = "production_rollback"
+        rollback_alias: str = "production_rollback",
     ) -> str:
-        """Promove e identifica a versão mais recente do modelo.
+        """Promove explicitamente a última versão, preservando o rollback.
 
         Exemplo:
-            version = tracker.promote_latest_model_version(
-                registered_model_name="example_classifier",
-                alias="champion",
-            )
+            version = tracker.promote_latest_model_version("credito")
         """
-        # Buscar versões registradas para o modelo informado.
-        client = MlflowClient()
-        versions = client.search_model_versions(f"name = '{registered_model_name}'")
-
-        # Interromper quando o modelo ainda não existir no registro.
-        if not versions:
-            raise ValueError(
-                f"Modelo registrado não encontrado: {registered_model_name}."
-            )
-
-        # Selecionar a versão mais recente do modelo.
-        latest_version = max(
-            versions,
-            key=lambda version: int(version.version),
+        _, versions = self._registered_versions(registered_model_name)
+        latest = max(int(version.version) for version in versions)
+        return self.promote_model_version(
+            registered_model_name, str(latest), alias, rollback_alias, tags
         )
 
-        # Selecionar a versão atual em prod
-        current_version = next((v for v in versions if alias in v.aliases), None)
+    def promote_model_version(
+        self,
+        name,
+        version,
+        alias="production",
+        rollback_alias="production_rollback",
+        tags=None,
+    ):
+        """Promove uma versão escolhida; repetir a promoção preserva o rollback.
 
-        if (current_version is not None):
-            client.set_registered_model_alias(
-                registered_model_name, 
-                rollback_alias, 
-                current_version.version
-            )
-
-        # Aplicar o alias na versão mais recente.
-        client.set_registered_model_alias(
-            registered_model_name,
-            alias,
-            latest_version.version,
-        )
-
-        # Tags ligam a versão do Registry ao código que a produziu.
+        Exemplo:
+            tracker.promote_model_version("credito", "2")
+        """
+        client, _ = self._registered_versions(name)
+        target = client.get_model_version(name, str(version))
         for key, value in (tags or {}).items():
-            client.set_model_version_tag(
-                registered_model_name,
-                latest_version.version,
-                key,
-                str(value),
-            )
-        logger.info(
-            "Modelo promovido para produção.",
-            extra={
-                "evento": "modelo_promovido_registry",
-                "nome_modelo_registrado": registered_model_name,
-                "versao": latest_version.version,
-                "alias": alias,
-            },
-        )
+            client.set_model_version_tag(name, str(version), key, str(value))
+        self._move_model_alias(client, target, alias, rollback_alias)
+        return str(version)
 
-        return str(latest_version.version)
+    def _move_model_alias(self, client, target, alias, rollback_alias):
+        """Preserva a versão anterior somente quando o modelo ativo muda.
+
+        Exemplo:
+            tracker._move_model_alias(client, target, "prod", "previous")
+        """
+        if alias == rollback_alias:
+            raise ValueError("Os aliases de produção e rollback devem ser distintos.")
+        current = self.model_alias_version(target.name, alias)
+        if current is not None and str(current) != str(target.version):
+            client.set_registered_model_alias(target.name, rollback_alias, current)
+        client.set_registered_model_alias(target.name, alias, str(target.version))
+
+    def rollback_model_version(self, name):
+        """Restaura o alias de rollback e preserva a versão que estava ativa.
+
+        Exemplo:
+            version = tracker.rollback_model_version("credito")
+        """
+        rollback = self.model_alias_version(name, "production_rollback")
+        if rollback is None:
+            raise ValueError(f"O modelo {name} não possui a versão de rollback.")
+        return self.promote_model_version(name, rollback)
+
+    def initialize_production_version(self, name, version):
+        """Publica o primeiro baseline; preserva uma produção já definida.
+
+        Exemplo:
+            tracker.initialize_production_version("credito", "1")
+        """
+        current = self.model_alias_version(name)
+        if current is not None:
+            return str(current)
+        return self.promote_model_version(name, version)
+
+    def model_alias_version(self, name, alias="production"):
+        """Consulta um alias sem criar ou alterar versões no Registry.
+
+        Exemplo:
+            current = tracker.model_alias_version("credito")
+        """
+        from mlflow.exceptions import MlflowException
+
+        client = MlflowClient(tracking_uri=self.tracking_uri)
+        try:
+            aliases = client.get_registered_model(name).aliases
+        except MlflowException as error:
+            if error.error_code != "RESOURCE_DOES_NOT_EXIST":
+                raise
+            return None
+        return str(aliases[alias]) if alias in aliases else None
+
+    def _registered_versions(self, name):
+        """Consulta versões no backend configurado por esta instância.
+
+        Exemplo:
+            client, versions = tracker._registered_versions("credito")
+        """
+        client = MlflowClient(tracking_uri=self.tracking_uri)
+        versions = client.search_model_versions(f"name = '{name}'")
+        if not versions:
+            raise ValueError(f"Modelo registrado não encontrado: {name}.")
+        return client, versions
 
     def _stringify_values(self, values: dict[str, Any]) -> dict[str, Any]:
         """Converte valores complexos para texto aceito pelo MLflow.

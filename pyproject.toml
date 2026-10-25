@@ -4,13 +4,11 @@ version = "0.1.0"
 description = "Monitoramento e analise de credito"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "fastapi[standard] (>=0.146.0,<0.147.0)",
+    "fastapi (==0.146.0)",
     "numpy (==2.5.3)",
-    "onnxruntime>=1.29,<2.0",
-    "prometheus-client>=0.21,<1.0",
-    "prometheus-fastapi-instrumentator (>=8.1.0,<9.0.0)",
-    "python-json-logger (>=4.2.0,<5.0.0)",
-    "uvicorn>=0.30,<1.0",
+    "prometheus-client (==0.26.0)",
+    "prometheus-fastapi-instrumentator (==8.1.0)",
+    "uvicorn (==0.54.0)",
     "pandas (==2.3.3)",
     "pandera[pandas] (==0.34.1)",
     "evidently (==0.7.23)",
@@ -25,6 +23,9 @@ dependencies = [
     "pytest (==9.1.1)",
     "ruff (==0.16.10)",
     "flake8 (==7.3.0)",
+    "pydantic (==2.14.0)",
+    "starlette (==1.7.0)",
+    "httpx (==0.28.1)",
 ]
 
 [tool.poetry]
@@ -66,6 +67,7 @@ mlflow = ">=3.0,<4.0"
 pandas = ">=2.2,<3.0"
 scikit-learn = ">=1.5,<2.0"
 skl2onnx = ">=1.18,<2.0"
+onnxruntime = "==1.31.0"
 
 [tool.poetry.group.pytorch]
 optional = true

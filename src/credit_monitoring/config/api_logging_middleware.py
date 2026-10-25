@@ -1,3 +1,6 @@
+"""Logs estruturados e correlação de requisições da API."""
+
+import logging
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -7,63 +10,55 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
 from ..prometheus.metrics import ERRORS_TOTAL
-from .logging_config import setup_api_logger
 
-LOGGER = setup_api_logger()
+LOGGER = logging.getLogger("credit_monitoring_api")
 
 
 class LoggingMiddleware(BaseHTTPMiddleware):
-    async def dispatch(
-        self,
-        request: Request,
-        call_next: Callable[[Request], Awaitable[Response]],
-    ) -> Response:
-        request_id = str(uuid.uuid4())
-        started_at = time.perf_counter()
-        route = request.url.path
-        client_host = request.client.host if request.client else None
-        LOGGER.info(
-            "inicio_de_requisicao",
-            extra={
-                "request_id": request_id,
-                "metodo_http": request.method,
-                "rota": route,
-            },
-        )
+    """Registra duração e erros, sem armazenar os perfis dos clientes.
 
-        request.state.request_id = request_id
+    Exemplo:
+        application.add_middleware(LoggingMiddleware)
+    """
+
+    async def dispatch(
+        self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        """Correlaciona o início e o resultado de cada requisição.
+
+        Exemplo:
+            response = await middleware.dispatch(request, call_next)
+        """
+        request.state.request_id = str(uuid.uuid4())
+        started_at = time.perf_counter()
+        self.log_request(request, "inicio_de_requisicao")
         try:
             response = await call_next(request)
         except Exception:
-            ERRORS_TOTAL.inc()
-            LOGGER.exception(
-                "erro_de_requisicao",
-                extra={
-                    "request_id": request_id,
-                    "metodo_http": request.method,
-                    "rota": route,
-                    "status_code": 500,
-                    "duracao": time.perf_counter() - started_at,
-                    "ip_cliente": client_host,
-                },
-            )
+            self.log_request(request, "erro_de_requisicao", started_at, 500)
+            LOGGER.exception("falha_na_requisicao")
             raise
+        self.log_request(request, "fim_de_requisicao", started_at, response.status_code)
+        response.headers["X-Request-ID"] = request.state.request_id
+        return response
 
-        duration = time.perf_counter() - started_at
-        LOGGER.info(
-            "fim_de_requisicao",
+    @staticmethod
+    def log_request(request, event, started_at=None, status_code=200):
+        """Publica duração e status com o mesmo identificador de correlação.
+
+        Exemplo:
+            LoggingMiddleware.log_request(request, "fim_de_requisicao", start, 200)
+        """
+        if status_code >= 400:
+            ERRORS_TOTAL.inc()
+        LOGGER.log(
+            logging.ERROR if status_code >= 500 else logging.INFO,
+            event,
             extra={
-                "request_id": request_id,
+                "request_id": request.state.request_id,
                 "metodo_http": request.method,
-                "rota": route,
-                "status_code": response.status_code,
-                "duracao": duration,
-                "ip_cliente": client_host,
+                "rota": request.url.path,
+                "status_code": status_code,
+                "duracao": time.perf_counter() - started_at if started_at else 0,
             },
         )
-
-        if response.status_code >= 400:
-            ERRORS_TOTAL.inc()
-
-        response.headers["X-Request-ID"] = request_id
-        return response

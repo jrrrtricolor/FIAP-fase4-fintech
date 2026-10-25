@@ -7,6 +7,11 @@ from ml_prep_kit import (
 
 
 def main():
+    """Reutiliza a referência e o gerador de drift do framework.
+
+    Exemplo:
+        python -m src.credit_monitoring.generate_drift_data
+    """
     project_root = Path.cwd()
     processed_path = project_root / "data/processed"
     preparation = HomeCreditData()
@@ -14,13 +19,11 @@ def main():
     preparation.random_state = experiment["random_state"]
     version_one = CSVDataLoader(processed_path).load({"v1": "credit_scoring.csv"})["v1"]
 
-    income_factor, credit_factor = 0.70, 1.40
-    version_two_path = processed_path / "credit_scoring_v2.csv"
     preparation.create_drift_version(
         version_one,
-        income_factor=income_factor,
-        credit_factor=credit_factor,
-        output_path=version_two_path,
+        income_factor=0.70,
+        credit_factor=1.40,
+        output_path=processed_path / "credit_scoring_v2.csv",
     )
 
 

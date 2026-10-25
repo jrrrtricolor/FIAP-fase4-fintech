@@ -1,54 +1,43 @@
 # syntax=docker/dockerfile:1
 
-# Builder e runtime reutilizam as mesmas camadas da imagem Python.
-FROM python:3.12-slim AS python-base
+FROM python:3.12-slim AS builder
+
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
+
+RUN python -m venv "${VIRTUAL_ENV}"
+
+# A mesma lista instala o projeto localmente, nos notebooks e na API.
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir --no-compile --requirement /tmp/requirements.txt \
+    && pip check
+
+FROM python:3.12-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     LANG=C.UTF-8 \
-    LC_ALL=C.UTF-8
+    LC_ALL=C.UTF-8 \
+    VIRTUAL_ENV=/opt/venv \
+    PATH="/opt/venv/bin:${PATH}" \
+    PYTHONPATH="/app:/app/src:/app/ml_prep_kit/src" \
+    MLFLOW_TRACKING_URI=sqlite:////app/data/processed/monitoring/mlflow.db
 
 WORKDIR /app
 
-
-# O builder resolve as dependências sem levar Poetry para a imagem final.
-FROM python-base AS builder
-
-ENV POETRY_VERSION=2.4.1 \
-    POETRY_NO_INTERACTION=1 \
-    POETRY_VIRTUALENVS_IN_PROJECT=1 \
-    POETRY_CACHE_DIR=/tmp/poetry-cache
-
-RUN python -m pip install --no-cache-dir "poetry==$POETRY_VERSION"
-
-# Copiar primeiro os manifests permite reutilizar o cache das dependências.
-COPY pyproject.toml poetry.lock ./
-
-RUN poetry install --only main --no-root --no-ansi \
-    && rm -rf "$POETRY_CACHE_DIR"
-
-
-FROM python-base AS runtime
-
-ENV PATH="/app/.venv/bin:$PATH" \
-    PYTHONPATH="/app:/app/src"
-
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends locales \
-    && sed -i 's/^# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen \
-    && locale-gen \
+    && apt-get install --yes --no-install-recommends libgomp1 \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd --system app \
-    && useradd --system --gid app --home-dir /app app
+    && useradd --uid 50000 --gid 0 --home-dir /app app \
+    && mkdir -p /app/data/processed \
+    && chown -R app:root /app/data
 
-ENV LANG=en_US.UTF-8 \
-    LC_ALL=en_US.UTF-8
+COPY --from=builder /opt/venv /opt/venv
+COPY --chown=app:root src ./src
+COPY --chown=app:root ml_prep_kit ./ml_prep_kit
 
-COPY --from=builder /app/.venv /app/.venv
-COPY --chown=app:app src ./src
-COPY --chown=app:app ml_prep_kit ./ml_prep_kit
-COPY --chown=app:app ./data/processed/monitoring ./data/processed/monitoring
-
+# Modelos, banco e relatórios são montados em runtime, sem congelá-los na imagem.
 USER app
 
 EXPOSE 8000
@@ -56,5 +45,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"
 
-# Poetry não é necessário no runtime; o uvicorn vem da .venv do builder.
 CMD ["uvicorn", "src.credit_monitoring.api:app", "--host", "0.0.0.0", "--port", "8000"]

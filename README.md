@@ -156,6 +156,73 @@ Na run principal, consulte **Artifacts → result.json / workflow.jsonl**. No ca
 e os relatórios HTML do monitoramento. O banco usa URIs em `/app`: mantenha SQLite e artefatos
 juntos e use o Docker.
 
+## API, Prometheus e Grafana
+
+O Compose da raiz complementa o ambiente de notebooks. Use os comandos abaixo na raiz
+do projeto, com os dados do Git LFS disponíveis. O primeiro comando de preparação reutiliza
+`experiment.joblib` quando os notebooks já produziram o baseline; caso contrário, executa
+preparação, treino e avaliação pelo mesmo framework. Ele inicializa o alias `production`
+uma única vez e recusa uma nova inicialização para preservar a referência publicada.
+
+```bash
+export AIRFLOW_UID=$(id -u)
+docker compose build credit_monitoring
+docker compose run --rm --no-deps \
+  --volume ./data/raw:/app/data/raw:ro credit_monitoring \
+  python -m src.credit_monitoring.generate_baseline_model
+docker compose up -d credit_monitoring prometheus grafana
+curl --fail --retry 10 --retry-all-errors --retry-delay 2 http://localhost:8000/ready
+```
+
+SQLite, modelos e relatórios são compartilhados em `data/processed`, sem serem copiados
+para a imagem. O UID alinha as permissões dos arquivos no host e nos containers.
+A API resolve o alias ao iniciar e informa a versão efetivamente carregada em `/ready`.
+`/health` verifica o processo; `/ready` retorna 503 quando o modelo não está disponível.
+
+Para produzir uma avaliação atualizada e acompanhar o alerta:
+
+```bash
+docker compose run --rm --no-deps credit_monitoring \
+  python -m src.credit_monitoring.generate_drift_data
+docker compose run --rm --no-deps credit_monitoring python -m src.credit_monitoring
+```
+
+Abra a [API](http://localhost:8000/docs), o [Prometheus](http://localhost:9090/targets)
+e o [Grafana](http://localhost:3000), com usuário/senha locais `admin`/`admin`, configuráveis
+por `GRAFANA_ADMIN_USER` e `GRAFANA_ADMIN_PASSWORD`. O dashboard **Monitor de score de crédito — API e drift**
+mantém os painéis da API e acrescenta drift, contrato, disponibilidade e última avaliação.
+
+O caminho é `DriftMonitor → summary.json → /metrics → Prometheus → Grafana`.
+O collector lê o resumo mais recente do workflow ou do notebook 03; não recalcula drift
+durante a coleta. Métricas usam o prefixo `credit_monitoring_` e o label `scenario`.
+`drift_share` é uma proporção entre 0 e 1. Sem rótulos, métricas supervisionadas ficam
+ausentes. `summary_available=0` indica ausência de evidência utilizável;
+`summary_read_error=1` identifica erro no resumo. O alerta de desatualização usa 24 horas,
+ajustáveis à frequência esperada dos lotes em `src/credit_monitoring/prometheus/alerts.yml`.
+
+O retreino mantém o candidato no MLflow para avaliação; não o promove automaticamente.
+Após publicar o baseline, use o workflow para avaliar candidatos e preserve a referência;
+não execute novamente o notebook 02 sobre o mesmo armazenamento de uma API em uso.
+Para reverter explicitamente uma promoção:
+
+```bash
+docker compose run --rm --no-deps credit_monitoring \
+  python -m src.credit_monitoring.rollback_model
+```
+
+Após uma promoção explícita ou rollback, reinicie a API e confira `/ready`:
+
+```bash
+docker compose restart credit_monitoring
+curl --fail --retry 10 --retry-all-errors --retry-delay 2 http://localhost:8000/ready
+```
+
+Rollback exige um alias `production_rollback`, preservado pelo framework quando ocorre
+uma promoção explícita para outra versão. O Compose também prepara os serviços Airflow,
+mas ainda não há DAG de agendamento. As futuras tarefas devem usar `/opt/venv/bin/python`
+(`CREDIT_PYTHON`), com diretório de execução `/app`, para compartilhar as dependências e
+os caminhos dos artefatos sem modificar o ambiente Python próprio do Airflow.
+
 ## Observabilidade e resposta aos alertas
 
 O MLflow centraliza parâmetros, métricas, status e logs como artefatos. Registra
@@ -170,8 +237,9 @@ em `error_type`, além do status `FAILED` da run.
 | Run `FAILED` | Consultar etapa e logs, corrigir a causa e iniciar nova execução |
 | Run `RUNNING` sem progresso | Conferir processo/container e último log; interrupções abruptas podem impedir o registro da falha |
 
-Sem rótulos recentes, não há avaliação de degradação supervisionada. Os alertas são flags
-consultáveis, sem notificações externas. Para verificar infraestrutura:
+Sem rótulos recentes, não há avaliação de degradação supervisionada. O Prometheus avalia
+os alertas de drift, qualidade e disponibilidade; notificações externas ainda não estão
+configuradas. Para verificar infraestrutura:
 
 ```bash
 docker compose --file docker/docker-compose.yml ps
@@ -181,7 +249,8 @@ docker stats --no-stream
 
 O executor investiga falhas; o mantenedor verifica recursos e faz backup conjunto de SQLite e
 artefatos; outro integrante revisa o candidato. Docker usa estágios e cache de dependências.
-Não há monitor externo, backup automático, Grafana, Airflow ou deploy na AWS.
+O Grafana acompanha a API e os resultados de drift. Ainda faltam agendamento por DAG,
+backup automático, métricas de recursos da infraestrutura e deploy na AWS.
 
 ## Governança e causalidade
 

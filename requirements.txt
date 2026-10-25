@@ -1,4 +1,4 @@
-# Dependências dos notebooks e da qualidade, com versões fixas para Python 3.12.
+# Dependências dos notebooks, API e qualidade, fixas para Python 3.12.
 # Recursos opcionais do framework estão em requirements-ml-prep.txt.
 # evidently.presets faz parte de evidently; sklearn vem de scikit-learn.
 numpy==2.5.3
@@ -16,3 +16,12 @@ jupyterlab==4.6.4
 pytest==9.1.1
 ruff==0.16.10
 flake8==7.3.0
+
+# API e testes HTTP: declaradas aqui para instalação local e Docker iguais.
+fastapi==0.146.0
+pydantic==2.14.0
+starlette==1.7.0
+prometheus-client==0.26.0
+prometheus-fastapi-instrumentator==8.1.0
+uvicorn==0.54.0
+httpx==0.28.1

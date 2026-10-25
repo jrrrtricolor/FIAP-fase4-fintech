@@ -1,39 +1,36 @@
 # syntax=docker/dockerfile:1
 
-# Builder e runtime reutilizam as mesmas camadas da imagem Python.
+FROM python:3.12-slim AS builder
+
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
+
+RUN python -m venv "${VIRTUAL_ENV}"
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir --no-compile --requirement /tmp/requirements.txt \
+    && pip check
+
 FROM apache/airflow:3.3.1-python3.12
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     LANG=C.UTF-8 \
-    LC_ALL=C.UTF-8
-
-ENV POETRY_VERSION=2.4.1 \
-    POETRY_NO_INTERACTION=1 \
-    POETRY_VIRTUALENVS_IN_PROJECT=1 \
-    POETRY_CACHE_DIR=/tmp/poetry-cache
+    LC_ALL=C.UTF-8 \
+    CREDIT_PYTHON=/opt/venv/bin/python \
+    PYTHONPATH="/app:/app/src:/app/ml_prep_kit/src" \
+    MLFLOW_TRACKING_URI=sqlite:////app/data/processed/monitoring/mlflow.db
 
 USER root
-RUN sed -i 's/^# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen \
-    && locale-gen
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
 
-ENV LANG=en_US.UTF-8 \
-    LC_ALL=en_US.UTF-8
+# As tarefas usarão CREDIT_PYTHON, preservando as dependências do próprio Airflow.
+COPY --from=builder --chown=airflow:root /opt/venv /opt/venv
+COPY --chown=airflow:root src /app/src
+COPY --chown=airflow:root ml_prep_kit /app/ml_prep_kit
 
+# Os dados entram pelo volume compartilhado definido no Compose.
 USER airflow
-RUN python -m pip install --no-cache-dir "poetry==$POETRY_VERSION"
-
-WORKDIR /app
-
-COPY --chown=airflow:root pyproject.toml poetry.lock ./
-
-RUN poetry install --only main,training --no-root --no-ansi \
-    && rm -rf "$POETRY_CACHE_DIR"
-
-COPY --chown=airflow:root src ./src
-COPY --chown=airflow:root ml_prep_kit ./ml_prep_kit
-COPY --chown=airflow:root data ./data
-
 WORKDIR /opt/airflow
-
-ENV PYTHONPATH="/app:/app/src:/app/ml_prep_kit/src"

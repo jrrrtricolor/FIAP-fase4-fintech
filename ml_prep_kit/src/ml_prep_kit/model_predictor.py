@@ -149,6 +149,40 @@ class ModelPredictor:
         model = loaders[flavor](model_uri)
         return cls(model=model, preprocessor=preprocessor)
 
+    @staticmethod
+    def resolve_mlflow_uri(model_uri: str, tracking_uri: str) -> tuple[str, str]:
+        """Fixa um alias do Registry para carregar e informar a mesma versão.
+
+        Exemplo:
+            uri, version = ModelPredictor.resolve_mlflow_uri(uri, "sqlite:///mlflow.db")
+        """
+        from mlflow.tracking import MlflowClient
+
+        reference = model_uri.removeprefix("models:/")
+        registered = model_uri.startswith("models:/") and (
+            "/" in reference or "@" in reference
+        )
+        if not registered:
+            return model_uri, "unregistered"
+        client = MlflowClient(tracking_uri=tracking_uri, registry_uri=tracking_uri)
+        name, version = ModelPredictor._registry_version(client, reference)
+        return f"models:/{name}/{version}", str(version)
+
+    @staticmethod
+    def _registry_version(client, reference: str) -> tuple[str, str]:
+        """Consulta a versão por alias ou pelo número explicitamente informado.
+
+        Exemplo:
+            name, version = ModelPredictor._registry_version(client, "credit@prod")
+        """
+        if "@" in reference:
+            name, alias = reference.rsplit("@", 1)
+            version = client.get_model_version_by_alias(name, alias).version
+        else:
+            name, version = reference.rsplit("/", 1)
+            version = client.get_model_version(name, version).version
+        return name, str(version)
+
     @classmethod
     def from_pkl(cls, model_file: str | Path) -> "ModelPredictor":
         """Carrega um pipeline local serializado com Pkl.
@@ -157,13 +191,14 @@ class ModelPredictor:
             predictor = ModelPredictor.from_pkl("model/pipeline.pkl")
         """
         import pickle
+
         data = None
 
         # Open the file in read-binary mode
-        with open(model_file, 'rb') as file:
+        with open(model_file, "rb") as file:
             data = pickle.load(file)
 
-        if (data is None):
+        if data is None:
             raise ValueError("Failed loading pkl model")
 
         return cls(model=data)
@@ -206,24 +241,19 @@ class ModelPredictor:
         self.preprocessor = joblib.load(artifact_path)
 
     def get_categorical_column_values(self, column_name: str) -> list[str]:
+        """Consulta categorias aprendidas pelo encoder do Pipeline existente.
+
+        Exemplo:
+            values = predictor.get_categorical_column_values("NAME_INCOME_TYPE")
         """
-        Retorna os valores únicos encontrados durante o treinamento 
-        para uma coluna categórica específica.
-        """
-
-        preprocessor = self.model['preprocessor']
-        categorical_transformers = preprocessor['cat']
-        categorical_store = categorical_transformers['categorical_store']
-
-        feature_names = categorical_store.categories.get(column_name)
-
-        if feature_names is None:
-            raise ValueError(
-                "Nenhum armazenamento categórico "
-                f"encontrado para a coluna: {column_name}"
-            )
-    
-        return feature_names
+        preprocessor = self._require_model()["preprocessor"]
+        for name, transformer, columns in preprocessor.transformers_:
+            if name == "cat" and column_name in columns:
+                categories = transformer["encoder"].categories_[
+                    list(columns).index(column_name)
+                ]
+                return categories.tolist()
+        raise ValueError(f"Coluna categórica ausente: {column_name}")
 
     def prepare_input(self, X: Any) -> Any:
         """Aplica o preprocessador quando ele estiver configurado.

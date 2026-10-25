@@ -29,8 +29,6 @@ from ml_prep_kit import (
     VisualizationReporter,
 )
 
-from .api_constants import MLFLOW_MODEL_NAME
-
 MODEL_PARAMETERS = {"max_iter": 2_000, "class_weight": "balanced"}
 EXPERIMENT_NAME = "tech-challenge-4-credit-monitoring"
 
@@ -52,12 +50,8 @@ def run_workflow(processed_dir, data_path=None, recovery=False, **drift_paramete
         workflow.step("limpeza_e_contrato", workflow.clean_data)
         # Comparar as entradas antes de aprender uma nova normalização.
         workflow.step("deteccao_de_drift", workflow.detect_drift)
-
         if workflow.should_retrain():
             workflow.retrain()
-            # TODO: Verificar se o modelo está apto para ir para producao
-            workflow.promote_model()
-
     return workflow.result
 
 
@@ -355,11 +349,6 @@ class CreditMonitoring:
             artifacts=[directory],
         )
 
-    def promote_model(self):
-        self.tracker.register_model(self.result["model_uri"], MLFLOW_MODEL_NAME)
-        self.tracker.promote_latest_model_version(
-            registered_model_name=MLFLOW_MODEL_NAME
-        )
 
 def main():
     """Lê parâmetros do terminal e apresenta o resultado completo em JSON.

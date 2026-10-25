@@ -10,8 +10,6 @@ import pandera.pandas as pa
 from pandera.typing import Series
 from sklearn.model_selection import train_test_split
 
-POSITIVE_CHECK = [pa.Check.gt(0), pa.Check(np.isfinite, name="valor_finito")]
-
 TARGET = "TARGET"
 NUMERIC_FEATURES = [
     "AGE_YEARS",
@@ -29,13 +27,22 @@ BINARY_FEATURES = ["FLAG_OWN_CAR", "FLAG_OWN_REALTY"]
 FEATURES = NUMERIC_FEATURES + CATEGORICAL_FEATURES + BINARY_FEATURES
 SOURCE_COLUMNS = ["SK_ID_CURR", "TARGET", "DAYS_BIRTH", *FEATURES[1:]]
 
+
 class HomeCreditDataV1Schema(pa.DataFrameModel):
-    AGE_YEARS: Series[int] = pa.Field(in_range={"min_value": 18, "max_value": 100})
-    AMT_INCOME_TOTAL: Series[float] = pa.Field(ge=0, coerce=True)
-    AMT_CREDIT: Series[float] = pa.Field(ge=0, coerce=True)
-    AMT_ANNUITY: Series[float] = pa.Field(ge=0, coerce=True, nullable=True)
+    """Compartilha as regras das features entre treinamento e API.
+
+    Exemplo:
+        validated = HomeCreditDataV1Schema.validate(features)
+    """
+
+    AGE_YEARS: Series[float] = pa.Field(
+        in_range={"min_value": 18, "max_value": 100}, coerce=True
+    )
+    AMT_INCOME_TOTAL: Series[float] = pa.Field(gt=0, coerce=True)
+    AMT_CREDIT: Series[float] = pa.Field(gt=0, coerce=True)
+    AMT_ANNUITY: Series[float] = pa.Field(gt=0, coerce=True, nullable=True)
     CNT_CHILDREN: Series[int] = pa.Field(ge=0)
-    
+
     NAME_INCOME_TYPE: Series[str] = pa.Field(str_matches=r".*\S.*")
     NAME_EDUCATION_TYPE: Series[str] = pa.Field(str_matches=r".*\S.*")
     NAME_HOUSING_TYPE: Series[str] = pa.Field(str_matches=r".*\S.*")
@@ -43,16 +50,23 @@ class HomeCreditDataV1Schema(pa.DataFrameModel):
     FLAG_OWN_CAR: Series[int] = pa.Field(isin=[0, 1])
     FLAG_OWN_REALTY: Series[int] = pa.Field(isin=[0, 1])
 
-    @pa.check("AMT_INCOME_TOTAL", name="check_finite")
-    def check_amt_income_total_finite(cls, series: pd.Series) -> pd.Series:
-        return np.isfinite(series)
+    class Config:
+        """Rejeita colunas inesperadas no contrato compartilhado.
 
-    @pa.check("AMT_CREDIT", name="check_finite")
-    def check_amt_credit_finite(cls, series: pd.Series) -> pd.Series:
-        return np.isfinite(series)
+        Exemplo:
+            assert HomeCreditDataV1Schema.Config.strict
+        """
 
-    @pa.check("AMT_ANNUITY", name="check_finite")
-    def check_amt_annuity_finite(cls, series: pd.Series) -> pd.Series:
+        strict = True
+        name = "credit_scoring_v1"
+
+    @pa.check("AMT_INCOME_TOTAL", "AMT_CREDIT", "AMT_ANNUITY", name="valor_finito")
+    def finite_amounts(cls, series: pd.Series) -> pd.Series:
+        """Rejeita valores monetários infinitos, preservando nulos permitidos.
+
+        Exemplo:
+            valid = HomeCreditDataV1Schema.finite_amounts(pd.Series([100.0]))
+        """
         return np.isfinite(series)
 
 
@@ -68,6 +82,13 @@ class HomeCreditData:
         partitions = data.split(prepared)
     """
 
+    target = TARGET
+    numeric_features = NUMERIC_FEATURES
+    categorical_features = CATEGORICAL_FEATURES
+    binary_features = BINARY_FEATURES
+    features = FEATURES
+    source_columns = SOURCE_COLUMNS
+
     def __init__(self, sample_size=20_000, random_state=42):
         """Configura a amostragem e o contrato de validação das colunas preparadas.
 
@@ -76,12 +97,12 @@ class HomeCreditData:
         """
         self.sample_size = sample_size
         self.random_state = random_state
-        self.contract = HomeCreditDataV1Schema.to_schema()
-
-        self.contract.add_columns({
-            "SK_ID_CURR": pa.Column(int, unique=True),
-            "TARGET": pa.Column(int, pa.Check.isin([0, 1]), required=False),
-        })
+        self.contract = HomeCreditDataV1Schema.to_schema().add_columns(
+            {
+                "SK_ID_CURR": pa.Column(int, unique=True),
+                "TARGET": pa.Column(int, pa.Check.isin([0, 1]), required=False),
+            }
+        )
 
     def sample(self, frame):
         """Seleciona amostra estratificada pelo alvo e ordenada por identificador.
@@ -90,25 +111,29 @@ class HomeCreditData:
             data = HomeCreditData(sample_size=20_000)
             sampled = data.sample(raw)
         """
-        if frame["SK_ID_CURR"].isna().any() or frame["SK_ID_CURR"].duplicated().any():
-            raise ValueError("Identificadores devem ser preenchidos e únicos.")
-        
-        if frame[TARGET].isna().any() or set(frame[TARGET].unique()) != {
-            0,
-            1,
-        }:
-            raise ValueError("O alvo deve conter 0 e 1, sem nulos.")
-        if len(frame) < self.sample_size:
-            raise ValueError("A base é menor que a amostra solicitada.")
+        self.validate_sample_source(frame)
         selected = frame.copy()
-        if len(CATEGORICAL_FEATURES) > self.sample_size:
+        if len(frame) > self.sample_size:
             selected, _ = train_test_split(
                 frame,
                 train_size=self.sample_size,
                 stratify=frame[TARGET],
                 random_state=self.random_state,
-        )
+            )
         return selected.sort_values("SK_ID_CURR").reset_index(drop=True)
+
+    def validate_sample_source(self, frame):
+        """Exige IDs únicos e alvo binário antes da amostragem estratificada.
+
+        Exemplo:
+            data.validate_sample_source(raw)
+        """
+        if frame["SK_ID_CURR"].isna().any() or frame["SK_ID_CURR"].duplicated().any():
+            raise ValueError("Identificadores devem ser preenchidos e únicos.")
+        if frame[TARGET].isna().any() or set(frame[TARGET].unique()) != {0, 1}:
+            raise ValueError("O alvo deve conter 0 e 1, sem nulos.")
+        if len(frame) < self.sample_size:
+            raise ValueError("A base é menor que a amostra solicitada.")
 
     def prepare(self, frame):
         """Converte idade/flags e valida; não remove registros nem preenche nulos.

@@ -3,6 +3,8 @@
 import ast
 import json
 import sqlite3
+import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -40,6 +42,50 @@ def sample_data():
         CNT_CHILDREN=np.zeros(1000, dtype=int),
         **sample_categories(),
     )
+
+
+def test_sampling_preserves_size_balance_and_reproducibility():
+    """A amostra usa o número de registros, preservando a proporção das classes.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k sampling
+    """
+    source = sample_data()
+    data = HomeCreditData(sample_size=100)
+    selected = data.sample(source)
+    assert len(selected) == 100
+    assert selected.TARGET.mean() == pytest.approx(source.TARGET.mean(), abs=0.01)
+    pd.testing.assert_frame_equal(selected, data.sample(source))
+
+
+@pytest.mark.parametrize("column,value", [("TARGET", 2), ("AMT_INCOME_TOTAL", 0)])
+def test_shared_contract_rejects_invalid_target_and_zero_amount(column, value):
+    """O contrato compartilhado conserva as regras dos dados preparados.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k shared_contract
+    """
+    frame = sample_data()
+    frame.loc[0, column] = value
+    with pytest.raises(pa.errors.SchemaErrors):
+        HomeCreditData().contract.validate(frame, lazy=True)
+
+
+@pytest.mark.parametrize("module", ["src.credit_monitoring", "credit_monitoring"])
+def test_both_command_entrypoints_remain_available(module):
+    """Mantém os comandos documentados antes da reorganização em pacote.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k entrypoints
+    """
+    result = subprocess.run(
+        [sys.executable, "-m", module, "--help"],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    )
+    assert "--recovery-demo" in result.stdout
 
 
 def sample_categories():
@@ -171,6 +217,18 @@ def test_training_preserves_baseline_and_partition_membership(trained_version):
             == part["SK_ID_CURR"].tolist()
         )
     assert set(restored["partitions"]["treino"]["NAME_INCOME_TYPE"]) == {"Working"}
+
+
+def test_retraining_does_not_publish_candidate(trained_version):
+    """Treinar e registrar evidências não substitui o modelo servido pela API.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k publish_candidate
+    """
+    _, _, result, _ = trained_version
+    client = MlflowClient(tracking_uri=result["tracking_uri"])
+    assert result["status"] == "treinado"
+    assert list(client.search_registered_models()) == []
 
 
 def test_normalization_uses_training_data_only(trained_version):
@@ -348,7 +406,7 @@ def assert_documented_short_functions(path, names=None):
     """Verifica o limite físico, incluindo assinatura, docstring e comentários.
 
     Exemplo:
-        assert_documented_short_functions(Path("src/credit_monitoring.py"))
+        assert_documented_short_functions(Path("src/credit_monitoring/__main__.py"))
     """
     for node in ast.walk(ast.parse(path.read_text())):
         if isinstance(node, ast.FunctionDef) and (names is None or node.name in names):
@@ -359,7 +417,7 @@ def assert_documented_short_functions(path, names=None):
 @pytest.mark.parametrize(
     "filename,names",
     [
-        ("src/credit_monitoring.py", None),
+        ("src/credit_monitoring/credit_monitoring.py", None),
         ("tests/test_credit_monitoring.py", None),
         (
             "ml_prep_kit/src/ml_prep_kit/home_credit_data.py",

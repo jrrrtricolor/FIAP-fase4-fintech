@@ -26,86 +26,45 @@ groups:
           summary: "Baixa confiança média das predições detectada"
           description: "A confiança média das predições permaneceu abaixo de 0.5."
 
-  - name: credit_monitoring_age_drift
+  - name: credit_monitoring_data
     rules:
-      # 1. Record the current rate of the summary sum over a 5-minute window
-      - record: job:referencia_de_idades_em_anos_sum:rate5m
-        expr: sum(rate(referencia_de_idades_em_anos_sum[5m])) by (job, instance)
-
-      # 2. Record the historical weekly baseline (mean and standard deviation over past weeks or 1w offset)
-      - record: job:referencia_de_idades_em_anos_sum:mean_1w
-        expr: avg_over_time(job:referencia_de_idades_em_anos_sum:rate5m[1w] offset 1w)
-
-      - record: job:referencia_de_idades_em_anos_sum:stddev_1w
-        expr: stddev_over_time(job:referencia_de_idades_em_anos_sum:rate5m[1w] offset 1w)
-
-      # 3. Alert rule: trigger if the current value deviates by more than ±3σ from the 1-week historical baseline
-      - alert: SummaryMetricWeeklyAnomaly
-        expr: |
-          abs(
-            job:referencia_de_idades_em_anos_sum:rate5m
-            -
-            job:referencia_de_idades_em_anos_sum:mean_1w
-          ) > (3 * job:referencia_de_idades_em_anos_sum:stddev_1w)
-        for: 15m
+      - alert: DataDriftDetected
+        expr: credit_monitoring_drift_alert == 1
+        for: 1m
         labels:
           severity: warning
         annotations:
-          summary: "Drift detectado no campo de idade em anos {{ $labels.instance }}"
-          description: "Valor atual é {{ $value }}, com desvio >3σ a partir da semana anterior."
-
-  - name: credit_monitoring_income_drift
-    rules:
-      # 1. Record the current rate of the summary sum over a 5-minute window
-      - record: job:referencia_de_renda_sum:rate5m
-        expr: sum(rate(referencia_de_renda_sum[5m])) by (job, instance)
-
-      # 2. Record the historical weekly baseline (mean and standard deviation over past weeks or 1w offset)
-      - record: job:referencia_de_renda_sum:mean_1w
-        expr: avg_over_time(job:referencia_de_renda_sum:rate5m[1w] offset 1w)
-
-      - record: job:referencia_de_renda_sum:stddev_1w
-        expr: stddev_over_time(job:referencia_de_renda_sum:rate5m[1w] offset 1w)
-
-      # 3. Alert rule: trigger if the current value deviates by more than ±3σ from the 1-week historical baseline
-      - alert: SummaryMetricWeeklyAnomaly
-        expr: |
-          abs(
-            job:referencia_de_renda_sum:rate5m
-            -
-            job:referencia_de_renda_sum:mean_1w
-          ) > (3 * job:referencia_de_renda_sum:stddev_1w)
-        for: 15m
+          summary: "Drift estatístico no cenário {{ $labels.scenario }}"
+          description: "Consulte o relatório Evidently e a execução correspondente no MLflow."
+      - alert: DataContractRejected
+        expr: credit_monitoring_quality_passed == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Dados rejeitados pelo contrato: {{ $labels.scenario }}"
+          description: "Corrija as violações antes de executar inferência ou retreino."
+      - alert: ModelPerformanceDegraded
+        expr: credit_monitoring_performance_alert == 1
+        for: 1m
         labels:
           severity: warning
         annotations:
-          summary: "Drift detectado no campo de renda {{ $labels.instance }}"
-          description: "Valor atual é {{ $value }}, com desvio >3σ a partir da semana anterior."
-
-  - name: credit_monitoring_credit_drift
-    rules:
-      # 1. Record the current rate of the summary sum over a 5-minute window
-      - record: job:referencia_de_credito_sum:rate5m
-        expr: sum(rate(referencia_de_credito_sum[5m])) by (job, instance)
-
-      # 2. Record the historical weekly baseline (mean and standard deviation over past weeks or 1w offset)
-      - record: job:referencia_de_credito_sum:mean_1w
-        expr: avg_over_time(job:referencia_de_credito_sum:rate5m[1w] offset 1w)
-
-      - record: job:referencia_de_credito_sum:stddev_1w
-        expr: stddev_over_time(job:referencia_de_credito_sum:rate5m[1w] offset 1w)
-
-      # 3. Alert rule: trigger if the current value deviates by more than ±3σ from the 1-week historical baseline
-      - alert: SummaryMetricWeeklyAnomaly
-        expr: |
-          abs(
-            job:referencia_de_credito_sum:rate5m
-            -
-            job:referencia_de_credito_sum:mean_1w
-          ) > (3 * job:referencia_de_credito_sum:stddev_1w)
-        for: 15m
+          summary: "Queda de desempenho: {{ $labels.scenario }}"
+          description: "Avalie os rótulos e o candidato no MLflow antes de promover uma versão."
+      - alert: MonitoringSummaryUnavailable
+        expr: credit_monitoring_summary_available == 0
+        for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "Drift detectado no campo de valor de crédito {{ $labels.instance }}"
-          description: "Valor atual é {{ $value }}, com desvio >3σ a partir da semana anterior."
+          summary: "Resultado de monitoramento indisponível"
+          description: "Confira o volume compartilhado e summary_read_error; gere uma avaliação válida."
+      - alert: MonitoringSummaryStale
+        expr: time() - credit_monitoring_last_evaluation_timestamp_seconds > 86400
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Última avaliação atualizada há mais de 24 horas"
+          description: "Execute o monitoramento e revise o agendamento; ajuste o prazo à frequência dos lotes."
