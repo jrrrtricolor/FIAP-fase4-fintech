@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Qualidade e testes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      MPLBACKEND: Agg
+      PYTEST_ADDOPTS: -ra
+    steps:
+      - name: Obter código
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          lfs: false
+          persist-credentials: false
+
+      - name: Preparar Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Executar Ruff, Flake8, formatação, testes e pip check
+        run: make check
+
+  docker:
+    name: Docker (${{ matrix.image }})
+    needs: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: api
+            dockerfile: Dockerfile
+            python: python
+          - image: notebooks
+            dockerfile: docker/Dockerfile
+            python: python
+          - image: airflow
+            dockerfile: Dockerfile.airflow
+            python: /opt/venv/bin/python
+    steps:
+      - name: Obter código
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          lfs: false
+          persist-credentials: false
+
+      - name: Preparar Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Construir imagem
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          tags: fiap-fintech-${{ matrix.image }}:ci
+          push: false
+          load: true
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+      - name: Validar dependências e imports na imagem
+        run: |
+          docker run --rm --network none --entrypoint '${{ matrix.python }}' \
+            fiap-fintech-${{ matrix.image }}:ci -m pip check
+          docker run --rm --network none --entrypoint '${{ matrix.python }}' \
+            fiap-fintech-${{ matrix.image }}:ci -c \
+            'from ml_prep_kit import DriftMonitor, HomeCreditData; from src.credit_monitoring.api import app'

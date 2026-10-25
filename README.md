@@ -74,6 +74,21 @@ Dados processados, modelos e o banco do MLflow são gerados em `data/processed/`
 fora do Git. Os dados brutos entram no container pelo volume do Compose e não
 são copiados para as camadas da imagem Docker.
 
+## Integração contínua
+
+O workflow [CI](.github/workflows/ci.yml) executa em pushes e pull requests para
+`develop` e `main`, com execução manual também configurada. Usa Python 3.12 e
+`make check` para verificar Ruff, Flake8, formatação, testes e dependências.
+Os testes usam dados sintéticos; a CI não baixa o CSV pelo Git LFS. Os módulos
+opcionais de PyTorch são ignorados quando essa dependência não está instalada.
+
+Após as verificações passarem, a CI constrói as imagens da API, dos notebooks e
+do Airflow, com cache separado por imagem. Cada imagem passa por `pip check` e
+importação dos componentes do framework e da API. O fluxo valida a construção;
+não publica imagens nem executa deploy. Os resultados ficam na aba **Actions**.
+
+Para reproduzir a etapa de qualidade localmente, execute `make check`.
+
 ## Publicar alterações nos dados
 
 Mantenha o Git LFS instalado ao fazer commits ou enviar alterações. O hook
