@@ -50,7 +50,7 @@ def run_workflow(processed_dir, data_path=None, recovery=False, **drift_paramete
         workflow.step("limpeza_e_contrato", workflow.clean_data)
         # Comparar as entradas antes de aprender uma nova normalização.
         workflow.step("deteccao_de_drift", workflow.detect_drift)
-        if workflow.should_retrain():
+        if workflow.step("decisao_de_retreino", workflow.should_retrain):
             workflow.retrain()
     return workflow.result
 
@@ -136,7 +136,7 @@ class CreditMonitoring:
         """
         # O CSV preparado já contém idade e flags convertidas pelos notebooks.
         self.partitions = self.data.prepare_version(
-            self.frame, self.baseline["partitions"]
+            self.frame, self.baseline["partitions"], require_labels=False
         )
         self.reference = self.baseline["partitions"]["treino"]
         self.scenarios = {
@@ -200,7 +200,7 @@ class CreditMonitoring:
         )
 
     def should_retrain(self):
-        """Aciona treinamento por drift de entradas ou degradação do desempenho.
+        """Autoriza retreino com alerta e rótulos suficientes, registrando a decisão.
 
         Exemplo:
             needs_training = workflow.should_retrain()
@@ -209,12 +209,45 @@ class CreditMonitoring:
             name: int(self.drift_metrics.get(name) or 0)
             for name in ("drift_alert", "performance_alert")
         }
-        self.result["alerts"] = alerts
-        self.tracker.log(metrics=alerts)
-        if any(alerts.values()):
-            return True
-        self.result["status"] = "sem_drift"
-        return False
+        decision = self.data.retraining_readiness(self.partitions)
+        decision["triggered"] = any(alerts.values()) and decision["ready"]
+        if not any(alerts.values()):
+            decision["reason"] = "sem_alerta"
+        self.record_retraining_decision(alerts, decision)
+        return decision["triggered"]
+
+    def record_retraining_decision(self, alerts, decision):
+        """Persiste gatilho, disponibilidade de rótulos e motivo na run principal.
+
+        Exemplo:
+            workflow.record_retraining_decision(alerts, decision)
+        """
+        self.result.update(
+            alerts=alerts, retraining=decision, status=self.retraining_status(decision)
+        )
+        self.tags["retraining_reason"] = decision["reason"]
+        self.tracker.log(
+            tags={"retraining_reason": decision["reason"]},
+            metrics={
+                **alerts,
+                "retraining_triggered": int(decision["triggered"]),
+                "labels_available": int(decision["ready"]),
+                "labeled_rows": decision["labeled_rows"],
+            },
+        )
+
+    @staticmethod
+    def retraining_status(decision):
+        """Traduz a decisão em status antes de iniciar ou adiar o treinamento.
+
+        Exemplo:
+            status = CreditMonitoring.retraining_status(decision)
+        """
+        if decision["triggered"]:
+            return "retreino_autorizado"
+        if decision["reason"] == "sem_alerta":
+            return "sem_drift"
+        return "aguardando_rotulos"
 
     def retrain(self):
         """Rastreia todo o ciclo do candidato; falhas na avaliação invalidam o treino.

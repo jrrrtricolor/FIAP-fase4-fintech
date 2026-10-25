@@ -315,7 +315,7 @@ def invalid_data(original, problem):
     """Introduz uma violação por caso, preservando o DataFrame original.
 
     Exemplo:
-        invalid = invalid_data(original, "missing_target")
+        invalid = invalid_data(original, "invalid_target")
     """
     invalid = original.copy(deep=True)
     if problem == "invalid_income":
@@ -323,11 +323,11 @@ def invalid_data(original, problem):
     elif problem == "missing_id":
         invalid = invalid.iloc[1:]
     else:
-        invalid = invalid.drop(columns="TARGET")
+        invalid.loc[0, "TARGET"] = 2
     return invalid
 
 
-@pytest.mark.parametrize("problem", ["invalid_income", "missing_id", "missing_target"])
+@pytest.mark.parametrize("problem", ["invalid_income", "missing_id", "invalid_target"])
 def test_invalid_version_is_blocked_before_model_loading(
     baseline, monkeypatch, problem
 ):
@@ -421,7 +421,14 @@ def assert_documented_short_functions(path, names=None):
         ("tests/test_credit_monitoring.py", None),
         (
             "ml_prep_kit/src/ml_prep_kit/home_credit_data.py",
-            {"prepare_version", "_clean_version", "_align_version", "model_datasets"},
+            {
+                "prepare_version",
+                "_clean_version",
+                "_align_version",
+                "model_datasets",
+                "monitoring_batch",
+                "retraining_readiness",
+            },
         ),
         (
             "ml_prep_kit/src/ml_prep_kit/experiment_tracker.py",
@@ -596,3 +603,124 @@ def test_recovery_rejects_ambiguous_input(tmp_path):
     with pytest.raises(ValueError, match="separadamente"):
         run_workflow(tmp_path, data_path="current.csv", recovery=True)
     assert not (tmp_path / "credit_monitoring").exists()
+
+
+def assert_retraining_skipped(result, reason):
+    """Confere que a decisão de adiar o treino foi persistida sem criar candidato.
+
+    Exemplo:
+        assert_retraining_skipped(result, "rotulos_indisponiveis")
+    """
+    assert result["status"] == "aguardando_rotulos"
+    assert result["retraining"]["reason"] == reason
+    assert "training_run_id" not in result and "model_uri" not in result
+    run = MlflowClient().get_run(result["workflow_run_id"])
+    assert run.info.status == "FINISHED"
+    assert run.data.tags["retraining_reason"] == reason
+    assert run.data.metrics["retraining_triggered"] == 0
+    assert run.data.metrics["labels_available"] == 0
+    saved = json.loads((Path(result["output_dir"]) / "result.json").read_text())
+    assert saved["retraining"] == result["retraining"]
+
+
+def remove_labels(frame, mode):
+    """Simula desfechos ausentes ou ainda incompletos no lote recebido.
+
+    Exemplo:
+        pending = remove_labels(frame, "parcial")
+    """
+    if mode == "ausente":
+        return frame.drop(columns="TARGET")
+    pending = frame.copy()
+    pending["TARGET"] = pending["TARGET"].astype(float)
+    pending.loc[: 10 if mode == "parcial" else len(pending), "TARGET"] = np.nan
+    return pending
+
+
+@pytest.mark.parametrize("mode", ["ausente", "nulo", "parcial"])
+def test_alert_without_complete_labels_waits_and_keeps_monitoring(baseline, mode):
+    """Mantém relatórios de drift e adia o treino sem transformar ausência em falha.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k without_complete_labels
+    """
+    data, directory, original = baseline
+    shifted = data.create_drift_version(original, income_factor=0.3, credit_factor=2)
+    remove_labels(shifted, mode).to_csv(
+        directory / "credit_scoring_v2.csv", index=False
+    )
+    result = run_workflow(directory)
+    assert_retraining_skipped(result, "rotulos_indisponiveis")
+    assert result["alerts"]["drift_alert"] == 1
+    assert (Path(result["output_dir"]) / "drift/data_drift.html").exists()
+
+
+@pytest.mark.parametrize("partition", ["treino", "validacao", "teste"])
+def test_single_class_labels_defer_retraining(baseline, partition):
+    """Exige duas classes para ajustar, escolher limiar e comparar AUC com validade.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k single_class_labels
+    """
+    data, directory, original = baseline
+    shifted = data.create_drift_version(original, income_factor=0.3, credit_factor=2)
+    ids = data.load_experiment(directory)["partitions"][partition]["SK_ID_CURR"]
+    shifted.loc[shifted["SK_ID_CURR"].isin(ids), "TARGET"] = 0
+    shifted.to_csv(directory / "credit_scoring_v2.csv", index=False)
+    assert_retraining_skipped(run_workflow(directory), "classes_insuficientes")
+
+
+def test_arriving_labels_trigger_retraining_on_next_execution(baseline):
+    """Retoma automaticamente o treino quando os rótulos chegam ao mesmo lote.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k arriving_labels
+    """
+    data, directory, original = baseline
+    shifted = data.create_drift_version(original, income_factor=0.3, credit_factor=2)
+    path = directory / "credit_scoring_v2.csv"
+    shifted.drop(columns="TARGET").to_csv(path, index=False)
+    pending = run_workflow(directory)
+    shifted.to_csv(path, index=False)
+    trained = run_workflow(directory)
+    assert_retraining_skipped(pending, "rotulos_indisponiveis")
+    assert trained["status"] == "treinado" and trained["retraining"]["triggered"]
+    assert trained["workflow_run_id"] != pending["workflow_run_id"]
+    run = MlflowClient().get_run(trained["workflow_run_id"])
+    assert run.data.metrics["retraining_triggered"] == 1
+    assert run.data.metrics["labels_available"] == 1
+
+
+def test_unlabeled_production_does_not_block_labeled_training(baseline):
+    """Retreina com treino/validação/teste rotulados sem exigir desfechos de produção.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k unlabeled_production
+    """
+    data, directory, original = baseline
+    shifted = data.create_drift_version(original, income_factor=0.3, credit_factor=2)
+    ids = data.load_experiment(directory)["partitions"]["producao"]["SK_ID_CURR"]
+    shifted["TARGET"] = shifted["TARGET"].astype(float)
+    shifted.loc[shifted["SK_ID_CURR"].isin(ids), "TARGET"] = np.nan
+    shifted.to_csv(directory / "credit_scoring_v2.csv", index=False)
+    result = run_workflow(directory)
+    assert result["status"] == "treinado"
+    assert result["retraining"]["labeled_rows"] == 800
+    restored = data.load_experiment(result["output_dir"])
+    assert "TARGET" not in restored["partitions"]["producao"]
+
+
+def test_training_preparation_still_requires_valid_labels():
+    """Mantém o contrato estrito no uso padrão de preparação para treinamento.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k still_requires
+    """
+    data, frame = HomeCreditData(), sample_data()
+    partitions = data.split(frame)
+    with pytest.raises(ValueError, match="exige TARGET"):
+        data.prepare_version(frame.drop(columns="TARGET"), partitions)
+    frame["TARGET"] = frame["TARGET"].astype(float)
+    frame.loc[0, "TARGET"] = 1.5
+    with pytest.raises(pa.errors.SchemaErrors):
+        data.prepare_version(frame, partitions, require_labels=False)

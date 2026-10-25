@@ -202,19 +202,50 @@ class HomeCreditData:
         if pd.concat(partitions.values())["SK_ID_CURR"].duplicated().any():
             raise ValueError("Há sobreposição de IDs entre partições.")
 
-    def prepare_version(self, frame, reference_partitions):
-        """Limpa a versão já convertida e preserva as partições para o treinamento.
+    def prepare_version(self, frame, reference_partitions, require_labels=True):
+        """Preserva partições; permite monitorar sem rótulos completos por opção.
 
         Exemplo:
             partitions_v2 = data.prepare_version(version_two, experiment["partitions"])
         """
         self.validate_partitions(reference_partitions)
-        prepared = self._clean_version(frame)
+        prepared = self._clean_version(frame, require_labels)
         partitions = self._align_version(prepared, reference_partitions)
+        if not require_labels:
+            partitions = {
+                name: self.monitoring_batch(part) for name, part in partitions.items()
+            }
         self.validate_partitions(partitions)
-        if set(partitions["treino"][TARGET].unique()) != {0, 1}:
+        if require_labels and set(partitions["treino"][TARGET].unique()) != {0, 1}:
             raise ValueError("O treino exige exemplos das duas classes do TARGET.")
         return partitions
+
+    def monitoring_batch(self, frame):
+        """Omite alvo incompleto de um lote validado, sem inventar desfechos.
+
+        Exemplo:
+            production = data.monitoring_batch(validated_production)
+        """
+        if TARGET in frame and frame[TARGET].isna().any():
+            return frame.drop(columns=TARGET)
+        return frame
+
+    def retraining_readiness(self, partitions):
+        """Exige rótulos completos e duas classes no treino, validação e teste.
+
+        Exemplo:
+            readiness = data.retraining_readiness(partitions)
+        """
+        result = {"ready": True, "reason": "rotulos_disponiveis", "labeled_rows": 0}
+        for name in ("treino", "validacao", "teste"):
+            part = partitions[name]
+            labels = part.get(TARGET, pd.Series(dtype="Int64"))
+            result["labeled_rows"] += int(labels.notna().sum())
+            if labels.empty or len(labels) != len(part) or labels.isna().any():
+                result.update(ready=False, reason="rotulos_indisponiveis")
+            elif labels.nunique() < 2 and result["ready"]:
+                result.update(ready=False, reason="classes_insuficientes")
+        return result
 
     def model_datasets(self, partitions):
         """Separa features e alvo para modelagem; exclui IDs e produção reservada.
@@ -230,8 +261,8 @@ class HomeCreditData:
             if name != "producao"
         }
 
-    def _clean_version(self, frame):
-        """Limpa categorias e exige o contrato e os rótulos, sem imputar valores.
+    def _clean_version(self, frame, require_labels=True):
+        """Valida features e rótulos conhecidos; ausências são opcionais no monitor.
 
         Exemplo:
             prepared = data._clean_version(version_two)
@@ -239,8 +270,13 @@ class HomeCreditData:
         prepared = frame.copy(deep=True)
         for name in CATEGORICAL_FEATURES:
             prepared[name] = prepared[name].str.strip().astype(object)
-        prepared = self.contract.validate(prepared, lazy=True)
-        if TARGET not in prepared:
+        contract = self.contract
+        if not require_labels:
+            contract = contract.update_column(
+                TARGET, dtype="Int64", nullable=True, coerce=True
+            )
+        prepared = contract.validate(prepared, lazy=True)
+        if require_labels and TARGET not in prepared:
             raise ValueError("O treinamento da nova versão exige TARGET.")
         return prepared
 

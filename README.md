@@ -68,9 +68,26 @@ docker compose --file docker/docker-compose.yml run --rm notebook \
 ```
 
 O workflow reutiliza a referência e a base v2. Primeiro valida o lote e detecta
-mudanças; depois, se houver alerta de drift ou desempenho, treina e avalia um
-candidato. Cada execução registra métricas, logs e artefatos no MLflow.
-A execução é iniciada por comando; ainda não existe agendamento por DAG.
+mudanças. O retreino é automático dentro dessa execução quando há alerta de drift
+ou desempenho e `TARGET` completo, com as duas classes, em cada partição de
+treino, validação e teste. Produção pode permanecer sem rótulos.
+
+| Condição | Comportamento |
+|---|---|
+| Sem alerta | Encerra com `sem_drift`, sem treinar |
+| Alerta e rótulos suficientes | Treina, avalia e salva o candidato no MLflow; termina com `treinado` |
+| Alerta e rótulos ausentes ou incompletos | Mantém o monitoramento e registra `aguardando_rotulos`, com motivo `rotulos_indisponiveis` |
+| Alerta e apenas uma classe em treino, validação ou teste | Adia o treino com motivo `classes_insuficientes` |
+| Violação do contrato | Interrompe o fluxo e registra a falha no MLflow |
+
+Rótulos parciais não são preenchidos: a avaliação supervisionada é omitida na
+partição incompleta. Quando os rótulos estiverem disponíveis, atualize o CSV
+preservando os IDs e execute novamente o mesmo comando. O workflow reavalia as
+condições e inicia o retreino se elas forem atendidas. A referência é preservada;
+a promoção do candidato continua exigindo revisão explícita.
+
+Cada execução registra decisão, métricas, logs, modelos e falhas no MLflow.
+O acionamento permanece por comando; ainda não existe agendamento por DAG.
 
 ### 4. Subir e testar a API
 
@@ -288,8 +305,8 @@ em `error_type`, além do status `FAILED` da run.
 | Sinal | Resposta do fluxo / ação do responsável |
 |---|---|
 | `quality_passed=0` | Bloqueia predições; executor corrige a origem e reexecuta |
-| `drift_alert=1` | ≥20% das features alteradas; revisar histogramas e testes KS/PSI; workflow aciona candidato |
-| `performance_alert=1` | Queda de AUC ≥0,05; investigar desfechos; workflow aciona candidato |
+| `drift_alert=1` | ≥20% das features alteradas; revisar histogramas e testes KS/PSI; aciona candidato quando há rótulos suficientes |
+| `performance_alert=1` | Queda de AUC ≥0,05; investigar desfechos; aciona candidato quando há rótulos suficientes |
 | Run `FAILED` | Consultar etapa e logs, corrigir a causa e iniciar nova execução |
 | Run `RUNNING` sem progresso | Conferir processo/container e último log; interrupções abruptas podem impedir o registro da falha |
 
@@ -344,6 +361,13 @@ Na run principal, consulte **Artifacts → result.json / workflow.jsonl**. No ca
 `teste_roc_auc`, `teste_average_precision`, `teste_recall` e `teste_brier_score`; abra `evaluation/`
 e os relatórios HTML do monitoramento. O banco usa URIs em `/app`: mantenha SQLite e artefatos
 juntos e use o Docker.
+
+A decisão de retreino fica em `result.json → retraining` e na tag
+`retraining_reason` da run principal. As métricas `retraining_triggered` e
+`labels_available` indicam se o treino foi acionado e se os rótulos atendem aos
+critérios. `labeled_rows` conta os rótulos aproveitados nas partições completas
+de treino, validação e teste; exclui produção e partições com rótulos parciais.
+As runs do monitoramento e do candidato permanecem ligadas à execução principal.
 
 ### Integração contínua
 
