@@ -11,6 +11,11 @@ __path__.append(str(_PACKAGE_DIR))
 _EXPORTS = {
     "DriftMonitor": ("drift_monitor", "DriftMonitor"),
     "HomeCreditData": ("home_credit_data", "HomeCreditData"),
+    "HomeCreditDataV1Schema": ("home_credit_data", "HomeCreditDataV1Schema"),
+    "HomeCreditTrainingWorkflow": (
+        "home_credit_training_workflow",
+        "HomeCreditTrainingWorkflow",
+    ),
     "CategoricalStore": ("categorical_store", "CategoricalStore"),
     "CSVDataLoader": ("csv_data_loader", "CSVDataLoader"),
     "DataValidator": ("data_validator", "DataValidator"),

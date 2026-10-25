@@ -150,6 +150,25 @@ class ModelPredictor:
         return cls(model=model, preprocessor=preprocessor)
 
     @classmethod
+    def from_pkl(cls, model_file: str | Path) -> "ModelPredictor":
+        """Carrega um pipeline local serializado com Pkl.
+
+        Exemplo:
+            predictor = ModelPredictor.from_pkl("model/pipeline.pkl")
+        """
+        import pickle
+        data = None
+
+        # Open the file in read-binary mode
+        with open(model_file, 'rb') as file:
+            data = pickle.load(file)
+
+        if (data is None):
+            raise ValueError("Failed loading pkl model")
+
+        return cls(model=data)
+
+    @classmethod
     def from_joblib(cls, model_path: str | Path) -> "ModelPredictor":
         """Carrega um pipeline local serializado com Joblib.
 
@@ -185,6 +204,26 @@ class ModelPredictor:
         import joblib
 
         self.preprocessor = joblib.load(artifact_path)
+
+    def get_categorical_column_values(self, column_name: str) -> list[str]:
+        """
+        Retorna os valores únicos encontrados durante o treinamento 
+        para uma coluna categórica específica.
+        """
+
+        preprocessor = self.model['preprocessor']
+        categorical_transformers = preprocessor['cat']
+        categorical_store = categorical_transformers['categorical_store']
+
+        feature_names = categorical_store.categories.get(column_name)
+
+        if feature_names is None:
+            raise ValueError(
+                "Nenhum armazenamento categórico "
+                f"encontrado para a coluna: {column_name}"
+            )
+    
+        return feature_names
 
     def prepare_input(self, X: Any) -> Any:
         """Aplica o preprocessador quando ele estiver configurado.
