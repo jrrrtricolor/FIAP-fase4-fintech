@@ -1,107 +1,216 @@
-# Tech Challenge 4 — Fintech
+# Credit Monitoring — FIAP Tech Challenge Fase 4
 
-O projeto explora dados de crédito, treina um modelo de referência e identifica
-mudanças nos dados. Os notebooks e o workflow reutilizam o `ml_prep_kit` e o
-Pipeline do scikit-learn. O MLflow armazena os metadados em SQLite e os modelos
-e relatórios em arquivos locais.
+[![CI — Qualidade, testes e Docker](https://github.com/jrrrtricolor/FIAP-fase4-fintech/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jrrrtricolor/FIAP-fase4-fintech/actions/workflows/ci.yml)
 
-## Obter o projeto e os dados
+Sistema acadêmico de monitoramento de um modelo de risco de crédito. O projeto
+valida os dados, simula mudanças de comportamento, identifica drift e treina um
+candidato quando há alertas. O foco é a sustentação e a confiabilidade do modelo.
 
-Instale Git, [Git LFS](https://git-lfs.com/), Docker com Compose e Make.
+> O retreino não garante melhora. A referência é preservada e a promoção de um
+> candidato exige revisão explícita. Os cenários são sintéticos e não autorizam
+> decisões reais de crédito.
+
+## Entrega
+
+| Item | Link / situação |
+|---|---|
+| Repositório | [FIAP-fase4-fintech](https://github.com/jrrrtricolor/FIAP-fase4-fintech) |
+| Branch de entrega | [`main`](https://github.com/jrrrtricolor/FIAP-fase4-fintech/tree/main) |
+| CI | [GitHub Actions](https://github.com/jrrrtricolor/FIAP-fase4-fintech/actions/workflows/ci.yml) |
+| Enunciado oficial | [Tech Challenge — Fase 4](docs/MLET%20-%20Tech%20Challenge%20-%20Fase%204.pdf) |
+| Governança e causalidade | [Plano neste README](#governança-e-causalidade) |
+| Vídeo STAR | Pendente — demonstração de até cinco minutos |
+
+## Roteiro do avaliador
+
+### 1. Obter o projeto e os dados
+
+Pré-requisitos: Git, [Git LFS](https://git-lfs.com/), Docker com Compose e Make.
 No macOS com Homebrew, instale o Git LFS com `brew install git-lfs`.
-
-Depois de instalar o Git LFS, execute:
+Execute os comandos a partir da raiz do projeto:
 
 ```bash
 git lfs install
-git clone --branch develop https://github.com/jrrrtricolor/FIAP-fase4-fintech.git
+git clone --branch main https://github.com/jrrrtricolor/FIAP-fase4-fintech.git
 cd FIAP-fase4-fintech
 git lfs pull
 git lfs fsck
 ```
 
-Se já tiver o projeto clonado, entre na pasta e execute `git lfs install`,
-`git pull` e `git lfs pull`.
+Em um clone existente, execute `git lfs install`, `git pull` e `git lfs pull`.
+O CSV completo deve estar disponível antes de executar os notebooks. Prefira o
+clone com Git LFS: o ZIP do GitHub pode conter somente o ponteiro para o CSV.
 
-Os notebooks usam estes dois arquivos do Home Credit:
-
-```text
-data/raw/home-credit-default-risk/
-├── application_train.csv
-└── HomeCredit_columns_description.csv
-```
-
-O primeiro tem 166.133.370 bytes, aproximadamente 158 MiB, e é versionado pelo
-Git LFS. O dicionário de colunas é versionado diretamente no Git. O arquivo
-de dados completo precisa estar disponível antes de executar os notebooks.
-
-Prefira clonar com Git LFS. O download ZIP do GitHub pode conter apenas um
-ponteiro no lugar do CSV: por padrão, os objetos LFS não entram nos arquivos ZIP.
-Para distribuí-los dessa forma, habilite **Settings → Archives → Include Git LFS
-objects in archives** no repositório.
-[Referência do GitHub](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/managing-repository-settings/managing-git-lfs-objects-in-archives-of-your-repository).
-
-## Executar com Docker
-
-Com o Docker iniciado, execute na raiz do projeto:
+### 2. Executar os notebooks
 
 ```bash
 make docker-build
 make docker-run
 ```
 
-Abra o endereço `http://localhost:8888` com o token exibido no terminal. O comando
-`docker-run` permanece em execução enquanto o Jupyter estiver ativo.
+Abra [localhost:8888](http://localhost:8888) com o token exibido no terminal.
+`make docker-run` permanece ativo enquanto o Jupyter estiver em execução.
+Execute todas as células de cada notebook, nesta ordem:
 
-Execute as células de cada notebook na ordem:
+| Notebook | O que demonstra |
+|---|---|
+| [01 — Análise exploratória](notebooks/01_eda_home_credit.ipynb) | Conhecimento da base, tipos, nulos e validação dos dados |
+| [02 — Preparação e treinamento](notebooks/02_preparacao_treinamento.ipynb) | Limpeza, separação, normalização, baseline e registro no MLflow |
+| [03 — Estratégia de monitoramento](notebooks/03_estrategia_monitoramento.ipynb) | Contratos, lote inválido, base v2, data/concept drift e histogramas sobrepostos |
 
-1. `notebooks/01_eda_home_credit.ipynb`: exploração e validação dos dados.
-2. `notebooks/02_preparacao_treinamento.ipynb`: preparação, treinamento e MLflow.
-3. `notebooks/03_estrategia_monitoramento.ipynb`: geração da v2 e detecção de drift.
+### 3. Executar o monitoramento e o retreino
 
-Depois dos notebooks, execute o workflow de monitoramento e retreinamento:
+Após os notebooks, abra outro terminal na raiz do projeto:
 
 ```bash
 docker compose --file docker/docker-compose.yml run --rm notebook \
   python -m src.credit_monitoring
 ```
 
-O workflow treina um candidato quando há alertas e o compara ao modelo original.
-A promoção para produção não é automática. Os cenários são sintéticos; retreinar
-não garante melhora de desempenho.
+O workflow reutiliza a referência e a base v2. Primeiro valida o lote e detecta
+mudanças; depois, se houver alerta de drift ou desempenho, treina e avalia um
+candidato. Cada execução registra métricas, logs e artefatos no MLflow.
+A execução é iniciada por comando; ainda não existe agendamento por DAG.
 
-Dados processados, modelos e o banco do MLflow são gerados em `data/processed/`,
-fora do Git. Os dados brutos entram no container pelo volume do Compose e não
-são copiados para as camadas da imagem Docker.
+### 4. Subir e testar a API
 
-## Integração contínua
+O Compose da raiz disponibiliza a API, o Prometheus e o Grafana. Inicialize o
+modelo de produção uma única vez:
 
-O workflow [CI](.github/workflows/ci.yml) executa em pushes e pull requests para
-`develop` e `main`, com execução manual também configurada. Usa Python 3.12 e
-`make check` para verificar Ruff, Flake8, formatação, testes e dependências.
-Os testes usam dados sintéticos; a CI não baixa o CSV pelo Git LFS. Os módulos
-opcionais de PyTorch são ignorados quando essa dependência não está instalada.
+```bash
+export AIRFLOW_UID=$(id -u)
+docker compose build credit_monitoring
+docker compose run --rm --no-deps \
+  --volume ./data/raw:/app/data/raw:ro credit_monitoring \
+  python -m src.credit_monitoring.generate_baseline_model
+docker compose up -d credit_monitoring prometheus grafana
+curl --fail http://localhost:8000/health
+curl --fail --retry 10 --retry-all-errors --retry-delay 2 http://localhost:8000/ready
+```
 
-Após as verificações passarem, a CI constrói as imagens da API, dos notebooks e
-do Airflow, com cache separado por imagem. Cada imagem passa por `pip check` e
-importação dos componentes do framework e da API. O fluxo valida a construção;
-não publica imagens nem executa deploy. Os resultados ficam na aba **Actions**.
+A inicialização reutiliza `experiment.joblib` produzido pelo notebook 02. Se não
+existir, executa preparação, treino e avaliação pelo mesmo framework. O comando
+recusa uma segunda inicialização para preservar o alias `production`. Se ele já
+estiver publicado, inicie os serviços sem repetir a inicialização.
 
-Para reproduzir a etapa de qualidade localmente, execute `make check`.
+Após publicar o baseline, não reexecute o notebook 02 sobre o mesmo armazenamento
+de uma API em uso. O UID alinha as permissões dos arquivos entre host e containers.
 
-## Publicar alterações nos dados
+Exemplo de inferência com as dez features do contrato:
 
-Mantenha o Git LFS instalado ao fazer commits ou enviar alterações. O hook
-configurado por `git lfs install` envia os objetos LFS durante o `git push`.
-O outro membro só poderá baixá-los depois que o commit e o objeto LFS tiverem
-sido enviados ao GitHub.
+```bash
+curl --fail http://localhost:8000/predict \
+  --header 'Content-Type: application/json' \
+  --data '{"prediction_data":[{
+    "AGE_YEARS":35.5,"AMT_INCOME_TOTAL":120000.0,
+    "AMT_CREDIT":250000.0,"AMT_ANNUITY":12000.0,"CNT_CHILDREN":0,
+    "NAME_INCOME_TYPE":"Working",
+    "NAME_EDUCATION_TYPE":"Secondary / secondary special",
+    "NAME_HOUSING_TYPE":"House / apartment",
+    "FLAG_OWN_CAR":1,"FLAG_OWN_REALTY":0
+  }]}'
+```
 
-## Dados e resultados
+A resposta contém os scores de dificuldade de pagamento, a versão carregada e
+o tempo de inferência. O Pipeline calcula os scores uma única vez por chamada.
+
+| Método | Endpoint | Finalidade |
+|---|---|---|
+| `GET` | `/health` | Processo da API ativo |
+| `GET` | `/ready` | Modelo disponível e versão; retorna 503 se a carga falhar |
+| `POST` | `/predict` | Validar perfis e calcular scores |
+| `GET` | `/metrics` | Métricas para o Prometheus |
+| `GET` | `/docs` | Contrato OpenAPI |
+| `GET` | `/income-types`, `/education-types`, `/housing-types` | Categorias conhecidas pelo modelo |
+
+### 5. Verificar o monitoramento
+
+| Serviço | Endereço | Verificação |
+|---|---|---|
+| API | [localhost:8000/docs](http://localhost:8000/docs) | Contrato e inferência |
+| Prometheus | [localhost:9090/targets](http://localhost:9090/targets) | Target da API ativo |
+| Grafana | [localhost:3000](http://localhost:3000) | Login local `admin` / `admin` |
+| MLflow | [localhost:5000](http://localhost:5000) | Iniciar a interface conforme a seção de MLflow abaixo |
+
+No Grafana, abra **Monitor de score de crédito — API e drift**. O dashboard
+apresenta métricas da API, drift, contratos, disponibilidade e última avaliação.
+As credenciais locais são configuráveis por `GRAFANA_ADMIN_USER` e
+`GRAFANA_ADMIN_PASSWORD`.
+
+Para gerar novamente a v2 e atualizar a avaliação após a preparação do baseline:
+
+```bash
+docker compose run --rm --no-deps credit_monitoring \
+  python -m src.credit_monitoring.generate_drift_data
+docker compose run --rm --no-deps credit_monitoring python -m src.credit_monitoring
+```
+
+Para encerrar os ambientes:
+
+```bash
+docker compose down
+docker compose --file docker/docker-compose.yml down
+```
+
+## Requisitos oficiais e evidências
+
+O estado abaixo distingue a implementação das pendências de entrega, conforme
+os critérios do [enunciado](docs/MLET%20-%20Tech%20Challenge%20-%20Fase%204.pdf).
+
+| Critério | Peso | Estado | Evidência principal |
+|---|---:|---|---|
+| Validação de dados | 25% | Implementada | [Contrato Pandera](ml_prep_kit/src/ml_prep_kit/home_credit_data.py): idade, valores monetários, flags e IDs; [notebook 03](notebooks/03_estrategia_monitoramento.ipynb) demonstra o bloqueio de um lote inválido |
+| Detecção de drift | 25% | Implementada | [DriftMonitor](ml_prep_kit/src/ml_prep_kit/drift_monitor.py): Evidently, KS/PSI e relatórios; notebook 03 compara referência e produção |
+| Observabilidade e logs | 20% | Parcial | [MLflow e logs](ml_prep_kit/src/ml_prep_kit/experiment_tracker.py), [alertas](src/credit_monitoring/prometheus/alerts.yml) e [dashboard](src/credit_monitoring/grafana/dashboards/credit-monitoring.json); métricas de recursos da infraestrutura pendentes |
+| Governança e LGPD | 15% | Documentada, com confirmações pendentes | Plano de privacidade, retenção, vieses e causalidade neste README; licença e enquadramento institucional a confirmar |
+| Vídeo STAR | 15% | Pendente | Gravar e inserir o link da demonstração de até cinco minutos |
+
+CI, API e retreino complementam a entrega. Airflow e AWS são metas de evolução
+do grupo; não substituem as evidências exigidas de contratos, drift e governança.
+
+## Arquitetura
+
+Os notebooks apresentam o experimento; `src/credit_monitoring` coordena a
+execução; o `ml_prep_kit` concentra validação, preparação, modelagem, avaliação,
+rastreamento e drift. O modelo usa o `sklearn.pipeline.Pipeline` nativo.
+
+| Etapa | Responsabilidade |
+|---|---|
+| Referência | Carregar → limpar → validar → separar → normalizar e treinar → avaliar → registrar no MLflow |
+| Monitoramento | Carregar lote → validar contrato → comparar com a referência → detectar drift antes de reajustar transformações |
+| Candidato | Retreinar quando houver alerta → comparar no teste separado → registrar para revisão |
+| Inferência | API carrega a versão do alias `production` na inicialização |
+| Observabilidade | `DriftMonitor → summary.json → /metrics → Prometheus → Grafana` |
+
+Metadados do MLflow ficam em SQLite; modelos e relatórios ficam em arquivos.
+`data/processed/` é compartilhado entre containers e permanece fora do Git.
+Os dados brutos entram por volume; as imagens usam estágios e cache de dependências.
+
+### Airflow e nuvem
+
+O [Compose](docker-compose.yml) e o [Dockerfile do Airflow](Dockerfile.airflow)
+preparam a infraestrutura, mas ainda não há DAG de agendamento. As futuras tarefas
+devem usar `/opt/venv/bin/python` (`CREDIT_PYTHON`), com diretório de execução `/app`.
+O ambiente Python próprio do Airflow permanece separado. O deploy na AWS está pendente.
+
+## Dados e modelo
+
+A fonte é o [Home Credit Default Risk](https://www.kaggle.com/competitions/home-credit-default-risk).
+São utilizados somente estes arquivos em `data/raw/home-credit-default-risk/`:
+
+| Arquivo | Uso |
+|---|---|
+| `application_train.csv` | Dados com alvo; 166.133.370 bytes (aproximadamente 158 MiB), versionados pelo Git LFS |
+| `HomeCredit_columns_description.csv` | Dicionário de colunas, versionado diretamente no Git |
+
+O baseline é uma regressão logística balanceada, comparada a um modelo Dummy.
 
 A amostra estratificada tem 20.000 registros, semente 42 e dez features. As partições têm IDs
 disjuntos: treino (12.000), validação (2.000), teste (2.000) e produção simulada (4.000). Imputação
 e normalização são ajustadas no treino; o limiar é escolhido na validação. Teste e produção não
 participam do ajuste. `TARGET=1` significa dificuldade de pagamento conforme o dicionário da base.
+
+### Resultados do experimento
 
 | Cenário | Resultado | Interpretação |
 |---|---|---|
@@ -120,7 +229,7 @@ run IDs. Os [histogramas sobrepostos](data/processed/review_evidence/histogramas
 renda e crédito deslocados e idade estável. Essas evidências ficam fora do Git; em um clone novo,
 execute os notebooks e consulte os artefatos no MLflow.
 
-## Demonstrar recuperação
+### Demonstração de recuperação
 
 ```bash
 docker compose --file docker/docker-compose.yml run --rm notebook \
@@ -139,7 +248,7 @@ quantidade de rótulos alterados ficam em `simulation` no resultado e no MLflow.
 identifica o CSV original. A referência permanece preservada; o teste é separado do ajuste,
 mas pertence à mesma base. Esta simulação não é validação externa ou temporal.
 
-## Critérios para revisar o candidato
+## Critérios de aceitação e rollback
 
 A aceitação é uma revisão explícita das métricas registradas, sem motor de aprovação ou promoção
 automática. Antes de substituir a referência, exigir:
@@ -155,88 +264,20 @@ ganho mínimo; a recuperação atende às métricas globais, mas os limites acad
 uso real. Novos ajustes após consultar o teste exigem outro conjunto reservado. Cada candidato
 tem sua própria run; a referência permanece disponível. `status=treinado` não indica aprovação.
 
-## Consultar o MLflow
+### Rollback de uma promoção
 
-```bash
-docker compose --file docker/docker-compose.yml run --rm \
-  -p 127.0.0.1:5000:5000 notebook \
-  mlflow ui --backend-store-uri sqlite:////app/data/processed/monitoring/mlflow.db \
-  --host 0.0.0.0 --port 5000
-```
-
-Abra [MLflow local](http://localhost:5000). Os experimentos são `tech-challenge-4-fintech-training`
-(baseline), `tech-challenge-4-fintech` (cenários) e `tech-challenge-4-credit-monitoring` (retreino).
-Na run principal, consulte **Artifacts → result.json / workflow.jsonl**. No candidato, compare
-`teste_roc_auc`, `teste_average_precision`, `teste_recall` e `teste_brier_score`; abra `evaluation/`
-e os relatórios HTML do monitoramento. O banco usa URIs em `/app`: mantenha SQLite e artefatos
-juntos e use o Docker.
-
-## API, Prometheus e Grafana
-
-O Compose da raiz complementa o ambiente de notebooks. Use os comandos abaixo na raiz
-do projeto, com os dados do Git LFS disponíveis. O primeiro comando de preparação reutiliza
-`experiment.joblib` quando os notebooks já produziram o baseline; caso contrário, executa
-preparação, treino e avaliação pelo mesmo framework. Ele inicializa o alias `production`
-uma única vez e recusa uma nova inicialização para preservar a referência publicada.
-
-```bash
-export AIRFLOW_UID=$(id -u)
-docker compose build credit_monitoring
-docker compose run --rm --no-deps \
-  --volume ./data/raw:/app/data/raw:ro credit_monitoring \
-  python -m src.credit_monitoring.generate_baseline_model
-docker compose up -d credit_monitoring prometheus grafana
-curl --fail --retry 10 --retry-all-errors --retry-delay 2 http://localhost:8000/ready
-```
-
-SQLite, modelos e relatórios são compartilhados em `data/processed`, sem serem copiados
-para a imagem. O UID alinha as permissões dos arquivos no host e nos containers.
-A API resolve o alias ao iniciar e informa a versão efetivamente carregada em `/ready`.
-`/health` verifica o processo; `/ready` retorna 503 quando o modelo não está disponível.
-
-Para produzir uma avaliação atualizada e acompanhar o alerta:
-
-```bash
-docker compose run --rm --no-deps credit_monitoring \
-  python -m src.credit_monitoring.generate_drift_data
-docker compose run --rm --no-deps credit_monitoring python -m src.credit_monitoring
-```
-
-Abra a [API](http://localhost:8000/docs), o [Prometheus](http://localhost:9090/targets)
-e o [Grafana](http://localhost:3000), com usuário/senha locais `admin`/`admin`, configuráveis
-por `GRAFANA_ADMIN_USER` e `GRAFANA_ADMIN_PASSWORD`. O dashboard **Monitor de score de crédito — API e drift**
-mantém os painéis da API e acrescenta drift, contrato, disponibilidade e última avaliação.
-
-O caminho é `DriftMonitor → summary.json → /metrics → Prometheus → Grafana`.
-O collector lê o resumo mais recente do workflow ou do notebook 03; não recalcula drift
-durante a coleta. Métricas usam o prefixo `credit_monitoring_` e o label `scenario`.
-`drift_share` é uma proporção entre 0 e 1. Sem rótulos, métricas supervisionadas ficam
-ausentes. `summary_available=0` indica ausência de evidência utilizável;
-`summary_read_error=1` identifica erro no resumo. O alerta de desatualização usa 24 horas,
-ajustáveis à frequência esperada dos lotes em `src/credit_monitoring/prometheus/alerts.yml`.
-
-O retreino mantém o candidato no MLflow para avaliação; não o promove automaticamente.
-Após publicar o baseline, use o workflow para avaliar candidatos e preserve a referência;
-não execute novamente o notebook 02 sobre o mesmo armazenamento de uma API em uso.
-Para reverter explicitamente uma promoção:
+O alias `production_rollback` é preservado pelo framework quando ocorre uma
+promoção explícita para outra versão. Para reverter essa promoção:
 
 ```bash
 docker compose run --rm --no-deps credit_monitoring \
   python -m src.credit_monitoring.rollback_model
-```
-
-Após uma promoção explícita ou rollback, reinicie a API e confira `/ready`:
-
-```bash
 docker compose restart credit_monitoring
 curl --fail --retry 10 --retry-all-errors --retry-delay 2 http://localhost:8000/ready
 ```
 
-Rollback exige um alias `production_rollback`, preservado pelo framework quando ocorre
-uma promoção explícita para outra versão. O Compose também prepara os serviços Airflow,
-mas ainda não há DAG de agendamento. As futuras tarefas devem usar `/opt/venv/bin/python`
-(`CREDIT_PYTHON`), com diretório de execução `/app`, para compartilhar as dependências e
-os caminhos dos artefatos sem modificar o ambiente Python próprio do Airflow.
+Reinicie a API também após uma promoção: ela resolve o alias somente na
+inicialização. Sem uma versão anterior no alias de rollback, não há reversão disponível.
 
 ## Observabilidade e resposta aos alertas
 
@@ -252,20 +293,80 @@ em `error_type`, além do status `FAILED` da run.
 | Run `FAILED` | Consultar etapa e logs, corrigir a causa e iniciar nova execução |
 | Run `RUNNING` sem progresso | Conferir processo/container e último log; interrupções abruptas podem impedir o registro da falha |
 
+O collector lê o resumo mais recente do workflow ou do notebook 03, sem
+recalcular drift na coleta. As métricas usam o prefixo `credit_monitoring_` e
+o label `scenario`; `drift_share` é uma proporção entre 0 e 1.
+`summary_available=0` indica ausência de evidência utilizável e
+`summary_read_error=1` identifica erro de leitura. O alerta de desatualização
+usa 24 horas, ajustáveis em [alerts.yml](src/credit_monitoring/prometheus/alerts.yml).
+
 Sem rótulos recentes, não há avaliação de degradação supervisionada. O Prometheus avalia
 os alertas de drift, qualidade e disponibilidade; notificações externas ainda não estão
 configuradas. Para verificar infraestrutura:
 
 ```bash
+docker compose ps
+docker compose logs --tail=100 credit_monitoring
 docker compose --file docker/docker-compose.yml ps
 docker compose --file docker/docker-compose.yml logs --tail=100 notebook
 docker stats --no-stream
 ```
 
-O executor investiga falhas; o mantenedor verifica recursos e faz backup conjunto de SQLite e
-artefatos; outro integrante revisa o candidato. Docker usa estágios e cache de dependências.
-O Grafana acompanha a API e os resultados de drift. Ainda faltam agendamento por DAG,
-backup automático, métricas de recursos da infraestrutura e deploy na AWS.
+O executor investiga falhas; o mantenedor verifica recursos e faz backup conjunto
+de SQLite e artefatos; outro integrante revisa o candidato.
+
+## Desenvolvimento local e MLflow
+
+Pré-requisitos locais: Python 3.12 e Make. As dependências diretas estão fixadas
+em `requirements.txt`; PyTorch e ONNX são opcionais em `requirements-ml-prep.txt`.
+
+```bash
+make install PYTHON=python3.12
+make check
+```
+
+Para usar os componentes opcionais do framework, execute `make install-ml-prep`.
+O roteiro do avaliador executa os experimentos no Docker para manter os caminhos
+do banco e dos artefatos consistentes.
+
+### Consultar o MLflow
+
+```bash
+docker compose --file docker/docker-compose.yml run --rm \
+  -p 127.0.0.1:5000:5000 notebook \
+  mlflow ui --backend-store-uri sqlite:////app/data/processed/monitoring/mlflow.db \
+  --host 0.0.0.0 --port 5000
+```
+
+Abra [MLflow local](http://localhost:5000). Os experimentos são `tech-challenge-4-fintech-training`
+(baseline), `tech-challenge-4-fintech` (cenários) e `tech-challenge-4-credit-monitoring` (retreino).
+Na run principal, consulte **Artifacts → result.json / workflow.jsonl**. No candidato, compare
+`teste_roc_auc`, `teste_average_precision`, `teste_recall` e `teste_brier_score`; abra `evaluation/`
+e os relatórios HTML do monitoramento. O banco usa URIs em `/app`: mantenha SQLite e artefatos
+juntos e use o Docker.
+
+### Integração contínua
+
+O workflow [CI](.github/workflows/ci.yml) executa em pushes e pull requests para
+`develop` e `main`, com execução manual também configurada. Usa Python 3.12 e
+`make check`: Ruff, Flake8, formatação, testes e `pip check`. Os testes usam dados
+sintéticos, sem baixar o CSV pelo Git LFS; os módulos opcionais de PyTorch são
+ignorados quando essa dependência não está instalada.
+
+Após as verificações, constrói as imagens da API, notebooks e Airflow com cache
+separado e valida dependências e imports. Não publica imagens nem executa deploy.
+Os resultados ficam na aba **Actions**.
+
+### Publicar alterações nos dados
+
+Mantenha o Git LFS instalado ao fazer commits ou enviar alterações. O hook
+configurado por `git lfs install` envia os objetos LFS durante o `git push`.
+O outro membro só poderá baixá-los depois que o commit e o objeto LFS tiverem
+sido enviados ao GitHub.
+
+Para incluir os objetos LFS no ZIP do GitHub, habilite **Settings → Archives →
+Include Git LFS objects in archives**.
+[Referência do GitHub](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/managing-repository-settings/managing-git-lfs-objects-in-archives-of-your-repository).
 
 ## Governança e causalidade
 
@@ -293,4 +394,16 @@ não basta para avaliar equidade. Rever variáveis e erros por grupo antes de qu
 A simulação testa intervenções de código em features ou rótulos; não identifica causas econômicas
 de inadimplência. Histogramas, KS/PSI e coeficientes não bastam para isso. Um estudo causal exige
 temporalidade, controle de confundidores e desenho experimental ou quase experimental adequado.
-A entrega ainda precisa do vídeo STAR de até cinco minutos e das confirmações de governança.
+
+## Limitações e pendências
+
+- Os cenários simulam mudanças; não representam uma validação temporal ou externa.
+- Drift nas entradas não implica queda de desempenho; sem rótulos recentes, não é possível medir essa queda.
+- Retreino e revisão de candidatos não garantem recuperação nem autorizam decisões reais de crédito.
+- Faltam DAG de agendamento, notificações externas, métricas de recursos, backup automático e deploy na AWS.
+- Faltam confirmar licença e enquadramento institucional e publicar o vídeo STAR.
+
+## Equipe
+
+- Cassio Junior
+- Júlia Otranto Aulicino
