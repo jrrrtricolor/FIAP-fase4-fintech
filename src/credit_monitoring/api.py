@@ -5,7 +5,10 @@ import os
 import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
+from functools import lru_cache
 from pathlib import Path
+from threading import Lock
+from time import monotonic
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response
@@ -19,7 +22,9 @@ from .api_constants import MLFLOW_MODEL_NAME
 from .config.api_logging_middleware import LoggingMiddleware
 from .config.logging_config import setup_api_logger
 from .prometheus.metrics import (
+    API_READY,
     MODEL_INFO,
+    MODEL_RELOAD_ERROR,
     PREDICTION_CONFIDENCE,
     PREDICTION_DURATION,
     PREDICTIONS_TOTAL,
@@ -32,7 +37,8 @@ LOGGER = logging.getLogger("credit_monitoring_api")
 DEFAULT_TRACKING_FILE = Path.cwd() / "data/processed/monitoring/mlflow.db"
 DEFAULT_TRACKING_URI = f"sqlite:///{DEFAULT_TRACKING_FILE}"
 DEFAULT_MODEL_URI = f"models:/{MLFLOW_MODEL_NAME}@production"
-ModelLoader = Callable[[], tuple[ModelPredictor, str]]
+ModelSnapshot = tuple[ModelPredictor, str]
+ModelLoader = Callable[[], ModelSnapshot]
 router = APIRouter()
 
 
@@ -72,20 +78,39 @@ class PredictionResponse(BaseModel):
     inference_time_ms: float
 
 
-def load_model() -> tuple[ModelPredictor, str]:
-    """Resolve o alias e carrega uma versão imutável do Registry no startup.
+def load_model() -> ModelSnapshot:
+    """Carrega a versão aprovada e reutiliza seu artefato imutável.
 
     Exemplo:
         predictor, version = load_model()
     """
+    model_uri, version = resolve_approved_model()
     tracking_uri = os.getenv("MLFLOW_TRACKING_URI", DEFAULT_TRACKING_URI)
-    model_uri, version = ModelPredictor.resolve_mlflow_uri(
-        os.getenv("MODEL_URI", DEFAULT_MODEL_URI), tracking_uri
-    )
-    predictor = ModelPredictor.from_mlflow(
-        model_uri=model_uri, tracking_uri=tracking_uri
-    )
-    return predictor, version
+    return cached_predictor(model_uri, tracking_uri), version
+
+
+def resolve_approved_model(version=None):
+    """Confere somente metadados, usando o alias ou a versão numérica informada.
+
+    Exemplo:
+        uri, version = resolve_approved_model(version="1")
+    """
+    tracking_uri = os.getenv("MLFLOW_TRACKING_URI", DEFAULT_TRACKING_URI)
+    model_uri = os.getenv("MODEL_URI", DEFAULT_MODEL_URI)
+    if version is not None:
+        separator = "@" if "@" in model_uri else "/"
+        model_uri = f"{model_uri.rsplit(separator, 1)[0]}/{version}"
+    return ModelPredictor.resolve_approved_mlflow_uri(model_uri, tracking_uri)
+
+
+@lru_cache(maxsize=2)
+def cached_predictor(model_uri, tracking_uri):
+    """Mantém no máximo dois artefatos, identificados por versão e backend.
+
+    Exemplo:
+        predictor = cached_predictor("models:/credito/2", "sqlite:///mlflow.db")
+    """
+    return ModelPredictor.from_mlflow(model_uri=model_uri, tracking_uri=tracking_uri)
 
 
 @asynccontextmanager
@@ -96,32 +121,96 @@ async def lifespan(application: FastAPI):
         application = FastAPI(lifespan=lifespan)
     """
     setup_api_logger()
-    MODEL_INFO.clear()
-    try:
-        if application.state.predictor is None and application.state.model_loader:
-            predictor, version = application.state.model_loader()
-            application.state.predictor = predictor
-            application.state.model_version = version
-        if application.state.predictor is not None:
-            MODEL_INFO.labels(version=application.state.model_version).set(1)
-    except Exception:
-        LOGGER.exception("falha_ao_carregar_modelo")
+    refresh_model(application)
+    publish_model_metrics(application)
     yield
 
 
-def require_predictor(request: Request) -> ModelPredictor:
-    """Recusa inferências enquanto o modelo não estiver disponível.
+def refresh_model(application):
+    """Tenta atualizar periodicamente sem bloquear requisições com modelo válido.
 
     Exemplo:
-        predictor = require_predictor(request)
+        refresh_model(application)
     """
-    predictor = request.app.state.predictor
-    if predictor is None:
+    state = application.state
+    now = monotonic()
+    if state.model_loader is None or now < state.next_refresh:
+        return
+    if not state.model_lock.acquire(blocking=False):
+        return
+    try:
+        if now >= state.next_refresh:
+            state.next_refresh = now + state.refresh_seconds
+            replace_model(application)
+    finally:
+        state.model_lock.release()
+
+
+def replace_model(application):
+    """Troca após a carga completa e preserva somente um snapshot ainda aprovado.
+
+    Exemplo:
+        replace_model(application)
+    """
+    state = application.state
+    try:
+        state.active_model = state.model_loader()
+        state.reload_error = False
+    except Exception:
+        state.reload_error = True
+        LOGGER.exception("falha_ao_carregar_modelo")
+        discard_revoked_model(application)
+    publish_model_metrics(application)
+
+
+def discard_revoked_model(application):
+    """Interrompe o uso de uma versão cuja aprovação foi comprovadamente retirada.
+
+    Exemplo:
+        discard_revoked_model(application)
+    """
+    state = application.state
+    if state.model_loader is not load_model or state.active_model[0] is None:
+        return
+    try:
+        resolve_approved_model(state.active_model[1])
+    except Exception as error:
+        revoked = isinstance(error, ValueError)
+        missing = getattr(error, "error_code", None) == "RESOURCE_DOES_NOT_EXIST"
+        if revoked or missing:
+            state.active_model = (None, "unavailable")
+            LOGGER.error("modelo_ativo_sem_aprovacao")
+
+
+def publish_model_metrics(application):
+    """Publica versão ativa, prontidão e erro de recarga a partir do mesmo estado.
+
+    Exemplo:
+        publish_model_metrics(application)
+    """
+    state = application.state
+    predictor, version = state.active_model
+    MODEL_INFO.clear()
+    if predictor is not None:
+        MODEL_INFO.labels(version=version).set(1)
+    API_READY.set(predictor is not None)
+    MODEL_RELOAD_ERROR.set(state.reload_error)
+
+
+def require_predictor(request: Request) -> ModelSnapshot:
+    """Captura modelo e versão juntos, recusando inferência sem snapshot válido.
+
+    Exemplo:
+        predictor, version = require_predictor(request)
+    """
+    refresh_model(request.app)
+    snapshot = request.app.state.active_model
+    if snapshot[0] is None:
         raise HTTPException(status_code=503, detail="Modelo indisponível.")
-    return predictor
+    return snapshot
 
 
-PredictorDependency = Annotated[ModelPredictor, Depends(require_predictor)]
+PredictorDependency = Annotated[ModelSnapshot, Depends(require_predictor)]
 
 
 @router.get("/health")
@@ -141,27 +230,30 @@ def ready(request: Request, response: Response) -> dict[str, str | bool]:
     Exemplo:
         status = ready(request, response)
     """
-    is_ready = request.app.state.predictor is not None
+    refresh_model(request.app)
+    predictor, version = request.app.state.active_model
+    is_ready = predictor is not None
     response.status_code = 200 if is_ready else 503
-    return {"ready": is_ready, "model_version": request.app.state.model_version}
+    return {"ready": is_ready, "model_version": version}
 
 
 @router.post("/predict", response_model=PredictionResponse)
 def predict(
-    payload: PredictionRequest, loaded_predictor: PredictorDependency, request: Request
+    payload: PredictionRequest, loaded_model: PredictorDependency
 ) -> PredictionResponse:
     """Calcula uma vez os scores de inadimplência dos perfis validados.
 
     Exemplo:
-        result = predict(payload, predictor, request)
+        result = predict(payload, (predictor, "2"))
     """
     started_at = time.perf_counter()
+    loaded_predictor, version = loaded_model
     scores = loaded_predictor.positive_scores(payload.prediction_data)
     duration = time.perf_counter() - started_at
     record_predictions(payload.prediction_data, scores, duration)
     return PredictionResponse(
         credit_scores=scores,
-        model_version=request.app.state.model_version,
+        model_version=version,
         inference_time_ms=duration * 1_000,
     )
 
@@ -201,9 +293,9 @@ def income_types(loaded_predictor: PredictorDependency) -> list[str]:
     """Lista tipos de renda conhecidos pelo encoder do modelo carregado.
 
     Exemplo:
-        values = income_types(predictor)
+        values = income_types((predictor, "2"))
     """
-    return loaded_predictor.get_categorical_column_values("NAME_INCOME_TYPE")
+    return loaded_predictor[0].get_categorical_column_values("NAME_INCOME_TYPE")
 
 
 @router.get("/education-types")
@@ -211,9 +303,9 @@ def education_types(loaded_predictor: PredictorDependency) -> list[str]:
     """Lista escolaridades conhecidas pelo encoder do modelo carregado.
 
     Exemplo:
-        values = education_types(predictor)
+        values = education_types((predictor, "2"))
     """
-    return loaded_predictor.get_categorical_column_values("NAME_EDUCATION_TYPE")
+    return loaded_predictor[0].get_categorical_column_values("NAME_EDUCATION_TYPE")
 
 
 @router.get("/housing-types")
@@ -221,9 +313,24 @@ def housing_types(loaded_predictor: PredictorDependency) -> list[str]:
     """Lista tipos de moradia conhecidos pelo encoder do modelo carregado.
 
     Exemplo:
-        values = housing_types(predictor)
+        values = housing_types((predictor, "2"))
     """
-    return loaded_predictor.get_categorical_column_values("NAME_HOUSING_TYPE")
+    return loaded_predictor[0].get_categorical_column_values("NAME_HOUSING_TYPE")
+
+
+def configure_model_state(application, predictor, version, loader):
+    """Prepara snapshot e sincronização sem carregar artefatos na importação.
+
+    Exemplo:
+        configure_model_state(application, None, "unavailable", load_model)
+    """
+    state = application.state
+    state.active_model = (predictor, version)
+    state.model_loader = loader if predictor is None else None
+    state.model_lock = Lock()
+    state.next_refresh = 0.0
+    state.refresh_seconds = 30.0
+    state.reload_error = False
 
 
 def create_app(
@@ -237,9 +344,7 @@ def create_app(
         application = create_app(predictor=predictor, model_version="4")
     """
     application = FastAPI(title="Credit Monitoring API", lifespan=lifespan)
-    application.state.predictor = predictor
-    application.state.model_version = model_version
-    application.state.model_loader = model_loader
+    configure_model_state(application, predictor, model_version, model_loader)
     application.include_router(router)
     application.add_middleware(LoggingMiddleware)
     Instrumentator().instrument(application).expose(application, endpoint="/metrics")

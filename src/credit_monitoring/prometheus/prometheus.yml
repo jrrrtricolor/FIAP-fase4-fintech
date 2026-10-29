@@ -13,3 +13,7 @@ scrape_configs:
     static_configs:
       - targets: ['credit_monitoring:8000']
     metrics_path: '/metrics'
+  # Sem o perfil infra este target fica DOWN; os alertas de recursos ficam sem dados.
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']

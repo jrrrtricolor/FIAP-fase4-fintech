@@ -158,7 +158,7 @@ class BaselineModelTrainer:
             }
         )
 
-    def register_model(self, model_uri=None):
+    def register_model(self, model_uri=None, threshold=None):
         """Registra o baseline e inicializa produção apenas se ainda não existir.
 
         Exemplo:
@@ -166,8 +166,18 @@ class BaselineModelTrainer:
         """
         if model_uri is None:
             model_uri = self.training_records["logistic_regression"]["model_uri"]
-        version = self.tracker.register_model(model_uri, MLFLOW_MODEL_NAME)
-        self.tracker.initialize_production_version(MLFLOW_MODEL_NAME, version.version)
+        threshold = (
+            threshold
+            if threshold is not None
+            else getattr(self, "selected_threshold", 0.5)
+        )
+        self.tracker.approve_baseline_model(model_uri)
+        version = self.tracker.register_approved_model(
+            model_uri, MLFLOW_MODEL_NAME, threshold
+        )
+        self.tracker.promote_approved_model_version(
+            MLFLOW_MODEL_NAME, version.version, None
+        )
 
     def require_initial_setup(self):
         """Impede substituir a referência de um modelo já publicado.
@@ -187,7 +197,7 @@ class BaselineModelTrainer:
         self.require_initial_setup()
         if (self.processed_path / "experiment.joblib").exists():
             existing = self.workflow.preparation.load_experiment(self.processed_path)
-            self.register_model(existing["model_uri"])
+            self.register_model(existing["model_uri"], existing.get("threshold", 0.5))
             return
         self.prepare_data()
         self.train_models()

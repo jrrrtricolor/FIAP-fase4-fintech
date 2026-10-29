@@ -18,13 +18,13 @@ groups:
           summary: "Alta duração da predição detectada"
           description: "O percentil 95 da duração das predições permaneceu acima de 1 segundo."
       - alert: LowAverageConfidence
-        expr: sum(rate(confianca_da_predicao_sum[5m])) / sum(rate(confianca_da_predicao_count[5m])) < 0.5
+        expr: (sum(rate(confianca_da_predicao_sum[5m])) / sum(rate(confianca_da_predicao_count[5m])) < 0.6) and (sum(rate(confianca_da_predicao_count[5m])) > 0)
         for: 5m
         labels:
           severity: warning
         annotations:
           summary: "Baixa confiança média das predições detectada"
-          description: "A confiança média das predições permaneceu abaixo de 0.5."
+          description: "A confiança média das predições permaneceu abaixo de 0.6; revise calibração e o desempenho com rótulos."
 
   - name: credit_monitoring_data
     rules:
@@ -68,3 +68,89 @@ groups:
         annotations:
           summary: "Última avaliação atualizada há mais de 24 horas"
           description: "Execute o monitoramento e revise o agendamento; ajuste o prazo à frequência dos lotes."
+
+  - name: credit_monitoring_operations
+    rules:
+    - alert: APIUnavailable
+      expr: up{job="credit_monitoring"} == 0
+      for: 1m
+      labels:
+        severity: critical
+      annotations:
+        summary: API indisponível para coleta
+        description: Confira o contêiner, logs e conectividade; /health deve responder HTTP 200.
+    - alert: APIModelUnavailable
+      expr: credit_monitoring_api_ready == 0
+      for: 1m
+      labels:
+        severity: critical
+      annotations:
+        summary: API sem modelo aprovado disponível
+        description: Confira /ready e as aprovações no Registry; restaure uma versão aprovada antes de servir inferências.
+    - alert: ModelReloadFailed
+      expr: credit_monitoring_model_reload_error == 1
+      for: 1m
+      labels:
+        severity: warning
+      annotations:
+        summary: Falha na atualização do modelo da API
+        description: Confira o alias, a aprovação e os artefatos no MLflow; uma versão válida anterior pode continuar atendendo.
+    - alert: MonitoringWorkflowFailed
+      expr: credit_monitoring_workflow_failed == 1
+      for: 1m
+      labels:
+        severity: critical
+      annotations:
+        summary: Workflow de monitoramento falhou
+        description: Consulte result.json, a etapa e a run no MLflow; corrija a causa antes de repetir o lote.
+    - alert: MonitoringWorkflowUnreadable
+      expr: credit_monitoring_workflow_read_error == 1
+      for: 1m
+      labels:
+        severity: warning
+      annotations:
+        summary: Estado operacional do workflow ilegível
+        description: Confira result.json e as permissões do volume compartilhado; não interprete ausência de dados como sucesso.
+    - alert: MonitoringStageSlow
+      expr: credit_monitoring_stage_duration_seconds > 600
+      for: 1m
+      labels:
+        severity: warning
+      annotations:
+        summary: Etapa {{ $labels.stage }} levou mais de 10 minutos
+        description: Consulte a duração no MLflow e CPU, memória e disco; ajuste o limite à carga esperada.
+    - alert: MonitoringWorkflowStalled
+      expr: (credit_monitoring_workflow_running == 1) and (time() - credit_monitoring_workflow_updated_timestamp_seconds > 1800)
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: Workflow sem progresso há mais de 30 minutos
+        description: Confira processo, logs e recursos antes de reiniciar; uma etapa longa também pode ultrapassar esse limite.
+
+  - name: credit_monitoring_infrastructure
+    rules:
+    - alert: HostCPUHigh
+      expr: sum by (instance) (rate(container_cpu_usage_seconds_total{job="cadvisor",id="/"}[5m])) / on (instance) (machine_cpu_cores{job="cadvisor"} > 0) > 0.9
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: CPU do host Linux acima de 90%
+        description: Confira processos e concorrência entre API, Airflow e treinamento; no Docker Desktop o host observado é a VM Linux.
+    - alert: HostMemoryHigh
+      expr: container_memory_working_set_bytes{job="cadvisor",id="/"} / on (instance) (machine_memory_bytes{job="cadvisor"} > 0) > 0.9
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: Memória do host Linux acima de 90%
+        description: Confira o consumo do treinamento e dos contêineres; reduza concorrência ou dimensione a memória da VM/host.
+    - alert: HostDiskHigh
+      expr: container_fs_usage_bytes{job="cadvisor",id="/",device=~"/dev/.+"} / (container_fs_limit_bytes{job="cadvisor",id="/",device=~"/dev/.+"} > 0) > 0.85
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: Disco {{ $labels.device }} acima de 85%
+        description: Confira logs, artefatos e volumes; libere espaço preservando o banco MLflow e as versões necessárias ao rollback.

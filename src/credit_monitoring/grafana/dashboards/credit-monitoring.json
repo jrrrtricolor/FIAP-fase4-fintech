@@ -531,20 +531,291 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "value_and_name"
       },
       "targets": [
         {
           "expr": "credit_monitoring_last_evaluation_timestamp_seconds * 1000",
-          "legendFormat": "Arquivo summary.json",
+          "legendFormat": "Avaliação de drift",
           "refId": "A",
+          "instant": true,
+          "range": false
+        },
+        {
+          "expr": "credit_monitoring_workflow_updated_timestamp_seconds * 1000",
+          "legendFormat": "Workflow",
+          "refId": "B",
           "instant": true,
           "range": false
         }
       ],
-      "title": "Última atualização da avaliação",
+      "title": "Horários da avaliação e do workflow",
       "type": "stat",
-      "description": "Horário de modificação do último summary.json. O alerta de desatualização usa 24 horas; ajuste-o à frequência dos lotes."
+      "description": "Horários persistidos da avaliação de drift e da atualização do workflow. Relatórios legados usam a data do arquivo."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "id": 11,
+      "title": "Variáveis afetadas pelo drift",
+      "type": "table",
+      "description": "Variáveis com drift igual a 1 em cada cenário. Consulte a disponibilidade do sumário para distinguir ausência de drift de ausência de avaliação.",
+      "gridPos": {
+        "x": 0,
+        "y": 36,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "targets": [
+        {
+          "expr": "credit_monitoring_feature_drift == 1",
+          "instant": true,
+          "range": false,
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "filterFieldsByName",
+          "options": {
+            "include": {
+              "names": [
+                "scenario",
+                "feature"
+              ]
+            }
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "scenario": "Cenário",
+              "feature": "Variável"
+            },
+            "indexByName": {
+              "scenario": 0,
+              "feature": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "unit": "short",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 44,
+        "w": 12,
+        "h": 8
+      },
+      "id": 12,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "expr": "up{job=\"credit_monitoring\"}",
+          "legendFormat": "API acessível",
+          "refId": "A",
+          "range": true
+        },
+        {
+          "expr": "credit_monitoring_api_ready",
+          "legendFormat": "Modelo pronto",
+          "refId": "B",
+          "range": true
+        },
+        {
+          "expr": "credit_monitoring_model_reload_error",
+          "legendFormat": "Falha de recarga",
+          "refId": "C",
+          "range": true
+        },
+        {
+          "expr": "credit_monitoring_workflow_failed",
+          "legendFormat": "Workflow falhou",
+          "refId": "D",
+          "range": true
+        },
+        {
+          "expr": "credit_monitoring_workflow_running",
+          "legendFormat": "Workflow em execução",
+          "refId": "E",
+          "range": true
+        },
+        {
+          "expr": "credit_monitoring_workflow_read_error",
+          "legendFormat": "Resultado ilegível",
+          "refId": "F",
+          "range": true
+        }
+      ],
+      "title": "Estado da API e do workflow (1 = ativo)",
+      "type": "timeseries",
+      "description": "Disponibilidade, prontidão e execução indicam atividade; os demais sinais indicam falha. Ausência de série não significa sucesso."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 44,
+        "w": 12,
+        "h": 8
+      },
+      "id": 13,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "expr": "credit_monitoring_stage_duration_seconds",
+          "legendFormat": "{{stage}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Duração das etapas da última execução",
+      "type": "timeseries",
+      "description": "Duração persistida de cada etapa concluída ou interrompida por falha. O alerta usa 600 segundos como limite inicial."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 52,
+        "w": 24,
+        "h": 8
+      },
+      "id": 14,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (instance) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",id=\"/\"}[5m])) / on(instance) (machine_cpu_cores{job=\"cadvisor\"} > 0)",
+          "legendFormat": "CPU / {{instance}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "expr": "container_memory_working_set_bytes{job=\"cadvisor\",id=\"/\"} / on(instance) (machine_memory_bytes{job=\"cadvisor\"} > 0)",
+          "legendFormat": "Memória / {{instance}}",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "expr": "container_fs_usage_bytes{job=\"cadvisor\",id=\"/\",device=~\"/dev/.+\"} / (container_fs_limit_bytes{job=\"cadvisor\",id=\"/\",device=~\"/dev/.+\"} > 0)",
+          "legendFormat": "Disco {{device}} / {{instance}}",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "Recursos do Docker (%)",
+      "type": "timeseries",
+      "description": "CPU, memória e disco do host Linux ou da VM Docker Desktop. Requer perfil infra com cAdvisor. Ausência de série indica cobertura indisponível, não consumo zero."
     }
   ],
   "refresh": "15s",
@@ -563,5 +834,5 @@
   "timezone": "browser",
   "title": "Monitor de score de crédito — API e drift",
   "uid": "credit-monitoring-api",
-  "version": 2
+  "version": 5
 }

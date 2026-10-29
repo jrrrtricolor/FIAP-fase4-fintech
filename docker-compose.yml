@@ -117,6 +117,22 @@ services:
     volumes:
       - ${AIRFLOW_PROJ_DIR:-.}/data/processed:/app/data/processed
 
+  # Linux: perfil opcional com acesso aos recursos do host.
+  cadvisor:
+    image: ghcr.io/google/cadvisor:0.60.6@sha256:b8e7d1093144fd088f425ff003d75a4aa405de075db78dae3bc563730b1bd07a
+    profiles: ["infra"]
+    privileged: true
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+    command: ["--housekeeping_interval=15s"]
+    restart: unless-stopped
+
   prometheus:
     image: prom/prometheus:v3.14.0
     volumes:

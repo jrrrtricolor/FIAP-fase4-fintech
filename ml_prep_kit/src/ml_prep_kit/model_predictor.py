@@ -183,6 +183,61 @@ class ModelPredictor:
             version = client.get_model_version(name, version).version
         return name, str(version)
 
+    @staticmethod
+    def resolve_approved_mlflow_uri(model_uri, tracking_uri):
+        """Resolve apenas versões aprovadas, vinculadas ao modelo da run concluída.
+
+        Exemplo:
+            uri, version = ModelPredictor.resolve_approved_mlflow_uri(uri, tracking)
+        """
+        from mlflow.tracking import MlflowClient
+
+        uri, version = ModelPredictor.resolve_mlflow_uri(model_uri, tracking_uri)
+        if version == "unregistered":
+            raise ValueError("A API exige uma versão aprovada no Model Registry.")
+        name = uri.removeprefix("models:/").rsplit("/", 1)[0]
+        client = MlflowClient(tracking_uri=tracking_uri, registry_uri=tracking_uri)
+        target = client.get_model_version(name, version)
+        ModelPredictor._require_approved_version(client, target)
+        return uri, version
+
+    @staticmethod
+    def _require_approved_version(client, target):
+        """Confere aprovação e identidade do artefato antes de permitir sua carga.
+
+        Exemplo:
+            ModelPredictor._require_approved_version(client, version)
+        """
+        model_id = ModelPredictor._approved_model_id(target)
+        logged = client.get_logged_model(model_id)
+        run = client.get_run(logged.source_run_id)
+        model_uri = f"models:/{model_id}"
+        valid = run.info.status == "FINISHED" and (
+            not target.run_id or target.run_id == logged.source_run_id
+        )
+        for tags in (target.tags, run.data.tags):
+            valid = valid and tags.get("approval_status") == "approved"
+            valid = valid and tags.get("approval_model_uri") == model_uri
+        if not valid:
+            raise ValueError("A versão não corresponde a um modelo aprovado.")
+
+    @staticmethod
+    def _approved_model_id(target):
+        """Extrai a identidade da origem; o Registry SQLite não retorna model_id.
+
+        Exemplo:
+            model_id = ModelPredictor._approved_model_id(version)
+        """
+        source = target.source
+        if not isinstance(source, str) or not source.startswith("models:/m-"):
+            raise ValueError("A versão não aponta para um artefato identificado.")
+        model_id = source.removeprefix("models:/")
+        if model_id == "m-" or any(symbol in model_id for symbol in "/@"):
+            raise ValueError("A origem do modelo não identifica um artefato único.")
+        if target.model_id not in (None, model_id) or target.status != "READY":
+            raise ValueError("A versão não possui um modelo pronto e consistente.")
+        return model_id
+
     @classmethod
     def from_pkl(cls, model_file: str | Path) -> "ModelPredictor":
         """Carrega um pipeline local serializado com Pkl.

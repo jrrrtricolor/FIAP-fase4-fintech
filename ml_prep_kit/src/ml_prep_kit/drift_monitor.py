@@ -1,7 +1,7 @@
 """Validação, predição e comparação estatística de um lote de produção."""
 
 from pathlib import Path
-from time import perf_counter
+from time import perf_counter, time
 
 import pandas as pd
 import pandera.pandas as pa
@@ -313,13 +313,36 @@ class DriftMonitor:
         """Consolida métricas por cenário, salva JSON e retorna a tabela.
 
         Exemplo:
-            summary = DriftMonitor.summarize(
-                {"controle": control_result, "data_drift": drift_result},
-                "data/processed/monitoring/summary.json",
-            )
+            summary = DriftMonitor.summarize(results, "summary.json")
         """
+        timestamp = time()
         summary = pd.DataFrame(
-            {name: result["metrics"] for name, result in results.items()}
+            {
+                name: DriftMonitor.summary_metrics(result, timestamp)
+                for name, result in results.items()
+            }
         ).T
         summary.to_json(path, orient="index", indent=2, force_ascii=False)
         return summary
+
+    @staticmethod
+    def summary_metrics(result, timestamp):
+        """Inclui o horário e as variáveis avaliadas sem inventar valores ausentes.
+
+        Exemplo:
+            metrics = DriftMonitor.summary_metrics(result, 1_790_000_000)
+        """
+        table = result.get("drift_table")
+        features = (
+            {}
+            if table is None
+            else {
+                f"feature_drift__{row.feature}": int(row.drift)
+                for row in table.itertuples()
+            }
+        )
+        return {
+            **result["metrics"],
+            **features,
+            "evaluation_timestamp_seconds": timestamp,
+        }

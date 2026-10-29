@@ -1,6 +1,7 @@
 """Métricas reutilizáveis para avaliação de classificadores."""
 
 import json
+from numbers import Real
 from pathlib import Path
 
 import numpy as np
@@ -31,6 +32,119 @@ class ModelEvaluator:
             [0, 1, 0, 1], [0.1, 0.8, 0.3, 0.6], threshold=0.5
         )
     """
+
+    CANDIDATE_THRESHOLDS = {
+        "minimum_sample_size": 500,
+        "minimum_class_support": 30,
+        "minimum_auc": 0.60,
+        "minimum_auc_gain": 0.02,
+        "minimum_ap_gain": 0.0,
+        "maximum_recall_drop": 0.05,
+        "maximum_brier_increase": 0.01,
+    }
+    CANDIDATE_COUNTS = (
+        "sample_size",
+        "true_negatives",
+        "false_positives",
+        "false_negatives",
+        "true_positives",
+    )
+    CANDIDATE_SCORES = ("roc_auc", "average_precision", "recall", "brier_score")
+
+    @classmethod
+    def evaluate_candidate(cls, reference, candidate):
+        """Decide pelos scores do mesmo teste reservado, sem promover o modelo.
+
+        Exemplo:
+            decision = ModelEvaluator.evaluate_candidate(reference, candidate)
+        """
+        thresholds = cls.CANDIDATE_THRESHOLDS.copy()
+        checks = {
+            "valid_metrics": cls._candidate_metrics_valid(reference)
+            and cls._candidate_metrics_valid(candidate)
+        }
+        if checks["valid_metrics"]:
+            checks.update(cls._candidate_data_checks(reference, candidate))
+            checks.update(cls._candidate_score_checks(reference, candidate))
+        checks = {name: bool(passed) for name, passed in checks.items()}
+        reasons = [name for name, passed in checks.items() if not passed]
+        return dict(
+            approved=not reasons, reasons=reasons, checks=checks, thresholds=thresholds
+        )
+
+    @classmethod
+    def _candidate_metrics_valid(cls, metrics):
+        """Recusa métricas ausentes, não finitas e contagens ou scores inválidos.
+
+        Exemplo:
+            valid = ModelEvaluator._candidate_metrics_valid(candidate)
+        """
+        counts, scores = cls.CANDIDATE_COUNTS, cls.CANDIDATE_SCORES
+        values = [metrics.get(name) for name in (*counts, *scores)]
+        if not all(
+            isinstance(v, Real) and not isinstance(v, bool) and np.isfinite(v)
+            for v in values
+        ):
+            return False
+        if any(
+            metrics[name] < 0 or metrics[name] != int(metrics[name]) for name in counts
+        ):
+            return False
+        return all(0 <= metrics[name] <= 1 for name in scores)
+
+    @classmethod
+    def _candidate_data_checks(cls, reference, candidate):
+        """Confere tamanho, suporte e equivalência das populações avaliadas.
+
+        Exemplo:
+            checks = ModelEvaluator._candidate_data_checks(reference, candidate)
+        """
+        original = cls._candidate_population(reference)
+        current = cls._candidate_population(candidate)
+        limits = cls.CANDIDATE_THRESHOLDS
+        return {
+            "matching_sample": original == current,
+            "consistent_counts": all(
+                size == positive + negative
+                for size, positive, negative in (original, current)
+            ),
+            "minimum_sample_size": current[0] >= limits["minimum_sample_size"],
+            "minimum_class_support": min(current[1:])
+            >= limits["minimum_class_support"],
+        }
+
+    @staticmethod
+    def _candidate_population(metrics):
+        """Obtém tamanho e suporte real das classes pela matriz de confusão.
+
+        Exemplo:
+            size, positives, negatives = ModelEvaluator._candidate_population(metrics)
+        """
+        return (
+            metrics["sample_size"],
+            metrics["true_positives"] + metrics["false_negatives"],
+            metrics["true_negatives"] + metrics["false_positives"],
+        )
+
+    @classmethod
+    def _candidate_score_checks(cls, reference, candidate):
+        """Aplica limites com tolerância apenas para arredondamento numérico.
+
+        Exemplo:
+            checks = ModelEvaluator._candidate_score_checks(reference, candidate)
+        """
+        limits, epsilon = cls.CANDIDATE_THRESHOLDS, 1e-12
+        gains = {key: candidate[key] - reference[key] for key in cls.CANDIDATE_SCORES}
+        return {
+            "minimum_auc": candidate["roc_auc"] + epsilon >= limits["minimum_auc"],
+            "auc_improvement": gains["roc_auc"] + epsilon >= limits["minimum_auc_gain"],
+            "average_precision_preserved": gains["average_precision"] + epsilon
+            >= limits["minimum_ap_gain"],
+            "recall_preserved": gains["recall"] + epsilon
+            >= -limits["maximum_recall_drop"],
+            "brier_preserved": gains["brier_score"] - epsilon
+            <= limits["maximum_brier_increase"],
+        }
 
     @classmethod
     def save_report(cls, report, path):

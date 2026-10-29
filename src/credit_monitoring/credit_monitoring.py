@@ -8,8 +8,8 @@ Execuções, parâmetros e métricas: data/processed/monitoring/mlflow.db (SQLit
 Modelos e relatórios: data/processed/monitoring/credit_artifacts/.
 Partições e resultado: data/processed/credit_monitoring/<execução>/.
 
-A referência permanece preservada. A v2 simula mudanças nas entradas mantendo
-os rótulos: retreinar não comprova melhora e não promove o modelo para produção.
+A referência permanece preservada. O candidato só substitui a produção após
+aprovação no mesmo teste reservado; a versão anterior permite rollback.
 """
 
 import argparse
@@ -28,6 +28,8 @@ from ml_prep_kit import (
     ModelPredictor,
     VisualizationReporter,
 )
+
+from .api_constants import MLFLOW_MODEL_NAME
 
 MODEL_PARAMETERS = {"max_iter": 2_000, "class_weight": "balanced"}
 EXPERIMENT_NAME = "tech-challenge-4-credit-monitoring"
@@ -149,20 +151,51 @@ class CreditMonitoring:
         )
 
     def prepare_monitor(self):
-        """Recupera o modelo original e configura os testes KS/PSI do framework.
+        """Recupera a produção aprovada e configura os testes KS/PSI do framework.
 
         Exemplo:
             monitor = workflow.prepare_monitor()
         """
-        self.predictor = ModelPredictor.from_mlflow(
-            self.baseline["model_uri"], tracking_uri=self.tracker.tracking_uri
-        )
+        self.load_reference_model()
         return DriftMonitor(
             self.data.numeric_features,
             self.data.categorical_features + self.data.binary_features,
             self.output_dir / "drift",
             **self.drift_parameters,
         )
+
+    def load_reference_model(self):
+        """Fixa a produção atual para comparar o candidato sem regredir versões.
+
+        Exemplo:
+            workflow.load_reference_model()
+        """
+        self.reference_version = self.tracker.model_alias_version(MLFLOW_MODEL_NAME)
+        uri = self.reference_model_uri()
+        self.tags.update(
+            reference_model_uri=uri, reference_version=self.reference_version
+        )
+        self.predictor = ModelPredictor.from_mlflow(
+            uri, tracking_uri=self.tracker.tracking_uri
+        )
+
+    def reference_model_uri(self):
+        """Obtém artefato aprovado e limiar da mesma versão congelada para comparação.
+
+        Exemplo:
+            uri = workflow.reference_model_uri()
+        """
+        uri = self.baseline["model_uri"]
+        self.reference_threshold = self.baseline["threshold"]
+        if self.reference_version is not None:
+            uri, _ = ModelPredictor.resolve_approved_mlflow_uri(
+                f"models:/{MLFLOW_MODEL_NAME}/{self.reference_version}",
+                self.tracker.tracking_uri,
+            )
+            self.reference_threshold = self.tracker.model_version_threshold(
+                MLFLOW_MODEL_NAME, self.reference_version
+            )
+        return uri
 
     def detect_drift(self):
         """Compara controle e lote atual; o framework registra métricas e relatórios.
@@ -178,7 +211,7 @@ class CreditMonitoring:
             self.data.contract,
             self.data.target,
             self.tracker,
-            threshold=self.baseline["threshold"],
+            threshold=self.reference_threshold,
             tags=self.tags,
             figures={"histogramas": self.drift_histograms()},
         )
@@ -259,16 +292,15 @@ class CreditMonitoring:
         with self.tracker.run("credit_candidate", tags=self.tags) as run:
             self.result["training_run_id"] = run.info.run_id
             self.tracker.log(
-                parameters={
-                    **MODEL_PARAMETERS,
-                    "seed": self.data.random_state,
-                    "train_rows": len(self.partitions["treino"]),
-                }
+                parameters={**MODEL_PARAMETERS, "seed": self.data.random_state}
             )
             self.step("configuracao_da_normalizacao", self.configure_normalization)
             self.step("treinamento", self.train_model)
             self.step("avaliacao", self.evaluate_model)
             self.step("registro_mlflow", self.register_model)
+            self.step("aprovacao_do_candidato", self.review_candidate)
+            self.step("persistencia", self.save_candidate)
+        self.step("publicacao", self.publish_candidate)
 
     def configure_normalization(self):
         """Monta o Pipeline do scikit-learn com preparação e classificador juntos.
@@ -321,7 +353,7 @@ class CreditMonitoring:
         self.evaluation = self.evaluator.evaluate_models(
             {"v1": self.predictor.model, "v2": self.model},
             self.data.model_datasets(self.partitions),
-            thresholds={"v1": self.baseline["threshold"], "v2": self.threshold},
+            thresholds={"v1": self.reference_threshold, "v2": self.threshold},
         )
         self.result["comparison"] = {
             name: report["teste"]["metrics"]
@@ -342,6 +374,52 @@ class CreditMonitoring:
         self.result.update(
             threshold=self.threshold, tracking_uri=self.tracker.tracking_uri
         )
+
+    def review_candidate(self):
+        """Aplica os limites ao mesmo teste reservado e registra aprovação ou rejeição.
+
+        Exemplo:
+            workflow.review_candidate()
+        """
+        comparison = self.result["comparison"]
+        decision = self.evaluator.evaluate_candidate(comparison["v1"], comparison["v2"])
+        self.result["approval"] = decision
+        self.tracker.log(
+            tags={
+                "approval_status": "approved" if decision["approved"] else "rejected",
+                "approval_model_uri": self.result["model_uri"],
+                "approval_kind": "candidate",
+            },
+            parameters=decision["thresholds"],
+            metrics={"candidate_approved": int(decision["approved"])},
+        )
+
+    def publish_candidate(self):
+        """Publica após concluir o treino, preservando a versão anterior no Registry.
+
+        Exemplo:
+            workflow.publish_candidate()
+        """
+        self.result["publication"] = {"status": "rejected"}
+        if not self.result["approval"]["approved"]:
+            return
+        self.result["publication"]["status"] = "awaiting_baseline"
+        if self.reference_version is None:
+            return
+        version = self.tracker.register_approved_model(
+            self.result["model_uri"], MLFLOW_MODEL_NAME, self.threshold
+        )
+        published = self.tracker.promote_approved_model_version(
+            MLFLOW_MODEL_NAME, version.version, self.reference_version
+        )
+        self.result["publication"] = {"status": "promoted", "version": published}
+
+    def save_candidate(self):
+        """Persiste candidato e decisão sem alterar o experimento de referência.
+
+        Exemplo:
+            workflow.save_candidate()
+        """
         self.data.save_experiment(
             self.output_dir,
             self.partitions,

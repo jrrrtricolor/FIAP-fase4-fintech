@@ -40,6 +40,12 @@ jobs:
       - name: Executar Ruff, Flake8, formatação, testes e pip check
         run: make check
 
+      - name: Validar alertas operacionais e recuperação
+        run: |
+          docker run --rm --entrypoint /bin/promtool \
+            -v "$PWD:/app:ro" -w /app/tests \
+            prom/prometheus:v3.14.0 test rules prometheus_alerts.yml
+
   docker:
     name: Docker (${{ matrix.image }})
     needs: checks

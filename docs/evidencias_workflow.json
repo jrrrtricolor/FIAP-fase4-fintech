@@ -1,0 +1,78 @@
+{
+  "validated_at": "2026-10-27T19:07:53.124953+00:00",
+  "context": "Demonstração e Grafana validados em 27/10/2026; código conferido e testes/notebooks reexecutados em 29/10/2026.",
+  "source_sha256": "52e96b895b1112e1c853f670e58372719c8441c5ed1c57ac2f7fad559d784f5f",
+  "sample_size": 20000,
+  "random_state": 42,
+  "partitions": {"treino": 12000, "validacao": 2000, "teste": 2000, "producao": 4000},
+  "baseline_run_id": "ccef4956c8ee486bb1956bf7c34efd49",
+  "scenarios": {
+    "stable": {
+      "workflow_run_id": "6a66727b1e934792a89841134bc707c3",
+      "status": "sem_drift",
+      "production_auc": 0.6015310637
+    },
+    "invalid": {
+      "workflow_run_id": "584a85cd57ec43d186bdbda30138fa2a",
+      "status": "falha",
+      "failed_stage": "limpeza_e_contrato"
+    },
+    "unlabeled_drift": {
+      "workflow_run_id": "bfb64087e22d49739e08218424ab8839",
+      "status": "aguardando_rotulos",
+      "drift_share": 0.2
+    },
+    "labeled_drift": {
+      "workflow_run_id": "77faf66263da4582b9cf98e2850dd4c5",
+      "training_run_id": "520ec2eb24914f5ca3c60f12583a230a",
+      "drift_share": 0.2,
+      "test_auc": {"reference": 0.6281499194471747, "candidate": 0.6279472708297447},
+      "approved": false,
+      "reasons": ["auc_improvement"]
+    },
+    "recovery": {
+      "workflow_run_id": "d732423534f3461aa77d1f6371b6ce47",
+      "training_run_id": "dc602270f6c1499f9df6fba9529e03c0",
+      "production_auc": 0.4675631011,
+      "test_auc": {"reference": 0.4945993186194638, "candidate": 0.7839268256554583},
+      "approved": true,
+      "published_version": "2",
+      "simulation": {"income_cutoff": 202500.0, "changed_labels": 2657}
+    }
+  },
+  "api": {
+    "versions": ["1", "2", "1"],
+    "reload_failure": {"served_version": "1", "api_ready": 1, "reload_error": 1},
+    "reload_recovered": true,
+    "rollback_restored_original_score": true
+  },
+  "preserved": {"raw_source_hash": true, "baseline_artifact_hash": true},
+  "baseline_groups": [
+    {"age": "<35", "positive_support": 74, "true_positives": 56, "recall": 0.7567567567567568},
+    {"age": "[35,55)", "positive_support": 66, "true_positives": 44, "recall": 0.6666666666666666},
+    {"age": ">=55", "positive_support": 21, "true_positives": 0, "recall": 0.0}
+  ],
+  "local_archive": "data/processed/validation_20261027/",
+  "limitations": [
+    "Cenários sintéticos; não há validação temporal ou externa.",
+    "Teste separado do ajuste, mas reutilizado entre cenários; novos ajustes exigem outro holdout.",
+    "Banco, artefatos e registros completos estão no arquivo local, fora do Git.",
+    "Grafana validado por HTTP, sem inspeção visual; p95 e confiança sem amostras suficientes na coleta."
+  ],
+  "validation": {
+    "reviewed_on": "2026-10-29",
+    "demonstration_checks_passed": 30,
+    "matching_code_hashes": 9,
+    "python_tests": 245,
+    "optional_skips": 4,
+    "notebooks_executed": 3,
+    "promtool_scenarios": 6,
+    "prometheus_rules": 18,
+    "grafana_validated_at": "2026-10-27T19:44:03.961717+00:00",
+    "grafana_panels_provisioned": 14,
+    "grafana_panels_with_null_values": [3, 4],
+    "platform": "linux/arm64"
+  },
+  "local_demo": "data/processed/validation_20261027/demo-20261027T190753124789Z/",
+  "local_checks_archive": "data/processed/validation_20261029/"
+}

@@ -724,3 +724,21 @@ def test_training_preparation_still_requires_valid_labels():
     frame.loc[0, "TARGET"] = 1.5
     with pytest.raises(pa.errors.SchemaErrors):
         data.prepare_version(frame, partitions, require_labels=False)
+
+
+def test_candidate_rejection_is_recorded_without_changing_reference(trained_version):
+    """Registra rejeição por teste insuficiente e preserva o modelo original.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k candidate_rejection
+    """
+    data, directory, result, original_hash = trained_version
+    assert result["approval"]["approved"] is False
+    assert "minimum_sample_size" in result["approval"]["reasons"]
+    assert data.source_hash(directory / "experiment.joblib") == original_hash
+    run = MlflowClient().get_run(result["training_run_id"])
+    assert run.data.tags["approval_status"] == "rejected"
+    assert run.data.metrics["candidate_approved"] == 0
+    saved = json.loads((Path(result["output_dir"]) / "result.json").read_text())
+    assert saved["approval"]["approved"] is False
+    assert saved["comparison"] == result["comparison"]

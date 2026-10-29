@@ -1,0 +1,145 @@
+rule_files:
+- ../src/credit_monitoring/prometheus/alerts.yml
+evaluation_interval: 1m
+tests:
+- name: Falha operacional dispara após tolerância e resolve com recuperação
+  interval: 1m
+  input_series:
+  - series: up{job="credit_monitoring",instance="credit_monitoring:8000"}
+    values: 0x6 1x40
+  - series: credit_monitoring_api_ready{job="credit_monitoring",instance="credit_monitoring:8000"}
+    values: 0x6 1x40
+  - series: credit_monitoring_model_reload_error{job="credit_monitoring",instance="credit_monitoring:8000"}
+    values: 1x6 0x40
+  - series: credit_monitoring_workflow_failed{job="credit_monitoring",instance="credit_monitoring:8000"}
+    values: 1x6 0x40
+  - series: credit_monitoring_workflow_read_error{job="credit_monitoring",instance="credit_monitoring:8000"}
+    values: 1x6 0x40
+  - series: credit_monitoring_stage_duration_seconds{job="credit_monitoring",instance="credit_monitoring:8000",stage="treinamento"}
+    values: 700x6 60x40
+  - series: credit_monitoring_workflow_running{job="credit_monitoring",instance="credit_monitoring:8000"}
+    values: 1x40 0x6
+  - series: credit_monitoring_workflow_updated_timestamp_seconds{job="credit_monitoring",instance="credit_monitoring:8000"}
+    values: 0x40 2460x6
+  promql_expr_test:
+  - expr: count by (alertname) (ALERTS{alertname=~"APIUnavailable|APIModelUnavailable|ModelReloadFailed|MonitoringWorkflowFailed|MonitoringWorkflowUnreadable|MonitoringStageSlow",alertstate="firing"})
+    eval_time: 0m
+    exp_samples: []
+  - expr: count by (alertname) (ALERTS{alertname=~"APIUnavailable|APIModelUnavailable|ModelReloadFailed|MonitoringWorkflowFailed|MonitoringWorkflowUnreadable|MonitoringStageSlow",alertstate="firing"})
+    eval_time: 2m
+    exp_samples:
+    - labels: '{alertname="APIUnavailable"}'
+      value: 1
+    - labels: '{alertname="APIModelUnavailable"}'
+      value: 1
+    - labels: '{alertname="ModelReloadFailed"}'
+      value: 1
+    - labels: '{alertname="MonitoringWorkflowFailed"}'
+      value: 1
+    - labels: '{alertname="MonitoringWorkflowUnreadable"}'
+      value: 1
+    - labels: '{alertname="MonitoringStageSlow"}'
+      value: 1
+  - expr: count by (alertname) (ALERTS{alertname=~"APIUnavailable|APIModelUnavailable|ModelReloadFailed|MonitoringWorkflowFailed|MonitoringWorkflowUnreadable|MonitoringStageSlow",alertstate="firing"})
+    eval_time: 7m
+    exp_samples: []
+  - expr: count(ALERTS{alertname="MonitoringWorkflowStalled",alertstate="firing"})
+    eval_time: 30m
+    exp_samples: []
+  - expr: count(ALERTS{alertname="MonitoringWorkflowStalled",alertstate="firing"})
+    eval_time: 36m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+  - expr: count(ALERTS{alertname="MonitoringWorkflowStalled",alertstate="firing"})
+    eval_time: 42m
+    exp_samples: []
+- name: Recursos elevados e recuperação do host Linux
+  interval: 1m
+  input_series:
+  - &cpu_usage
+    series: container_cpu_usage_seconds_total{job="cadvisor",instance="cadvisor:8080",id="/",cpu="total"}
+    values: 0+114x15 1722+12x10
+  - series: machine_cpu_cores{job="cadvisor",instance="cadvisor:8080"}
+    values: 2x26
+  - &memory_usage
+    series: container_memory_working_set_bytes{job="cadvisor",instance="cadvisor:8080",id="/"}
+    values: 950x15 500x10
+  - series: machine_memory_bytes{job="cadvisor",instance="cadvisor:8080"}
+    values: 1000x26
+  - &disk_usage
+    series: container_fs_usage_bytes{job="cadvisor",instance="cadvisor:8080",id="/",device="/dev/vda"}
+    values: 900x15 500x10
+  - series: container_fs_limit_bytes{job="cadvisor",instance="cadvisor:8080",id="/",device="/dev/vda"}
+    values: 1000x26
+  promql_expr_test:
+  - expr: count by (alertname) (ALERTS{alertname=~"HostCPUHigh|HostMemoryHigh|HostDiskHigh",alertstate="firing"})
+    eval_time: 0m
+    exp_samples: []
+  - expr: count by (alertname) (ALERTS{alertname=~"HostCPUHigh|HostMemoryHigh|HostDiskHigh",alertstate="firing"})
+    eval_time: 10m
+    exp_samples:
+    - labels: '{alertname="HostCPUHigh"}'
+      value: 1
+    - labels: '{alertname="HostMemoryHigh"}'
+      value: 1
+    - labels: '{alertname="HostDiskHigh"}'
+      value: 1
+  - expr: count by (alertname) (ALERTS{alertname=~"HostCPUHigh|HostMemoryHigh|HostDiskHigh",alertstate="firing"})
+    eval_time: 22m
+    exp_samples: []
+- name: Perfil infra desligado não gera falso alerta
+  interval: 1m
+  input_series:
+  - series: up{job="cadvisor",instance="cadvisor:8080"}
+    values: '0x20'
+  promql_expr_test:
+  - expr: ALERTS{alertname=~"Host.*",alertstate="firing"}
+    eval_time: 20m
+    exp_samples: []
+- name: Denominadores de recursos ausentes ou nulos não produzem percentuais falsos
+  interval: 1m
+  input_series:
+  - *cpu_usage
+  - series: machine_cpu_cores{job="cadvisor",instance="cadvisor:8080"}
+    values: '0x26'
+  - *memory_usage
+  - series: machine_memory_bytes{job="cadvisor",instance="cadvisor:8080"}
+    values: '0x26'
+  - *disk_usage
+  - series: container_fs_limit_bytes{job="cadvisor",instance="cadvisor:8080",id="/",device="/dev/vda"}
+    values: '0x26'
+  promql_expr_test:
+  - expr: ALERTS{alertname=~"Host.*",alertstate="firing"}
+    eval_time: 10m
+    exp_samples: []
+- name: Confiança baixa exige tráfego e resolve com scores mais seguros
+  interval: 1m
+  input_series:
+  - series: confianca_da_predicao_sum
+    values: 0+55x9 585+90x10
+  - series: confianca_da_predicao_count
+    values: 0+100x20
+  promql_expr_test:
+  - expr: count(ALERTS{alertname="LowAverageConfidence",alertstate="firing"})
+    eval_time: 5m
+    exp_samples: []
+  - expr: count(ALERTS{alertname="LowAverageConfidence",alertstate="firing"})
+    eval_time: 6m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+  - expr: count(ALERTS{alertname="LowAverageConfidence",alertstate="firing"})
+    eval_time: 15m
+    exp_samples: []
+- name: API sem predições não gera alerta de confiança
+  interval: 1m
+  input_series:
+  - series: confianca_da_predicao_sum
+    values: '0x20'
+  - series: confianca_da_predicao_count
+    values: '0x20'
+  promql_expr_test:
+  - expr: ALERTS{alertname="LowAverageConfidence",alertstate="firing"}
+    eval_time: 20m
+    exp_samples: []

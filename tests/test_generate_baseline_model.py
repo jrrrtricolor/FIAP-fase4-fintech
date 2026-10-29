@@ -112,13 +112,13 @@ def test_baseline_initialization_uses_exact_registered_version(trainer):
     Exemplo:
         pytest tests/test_generate_baseline_model.py -k exact_registered_version
     """
-    trainer.tracker.register_model.return_value = SimpleNamespace(version="7")
+    trainer.tracker.register_approved_model.return_value = SimpleNamespace(version="7")
     trainer.register_model()
-    trainer.tracker.register_model.assert_called_once_with(
-        "runs:/logistic_regression/model", "home_credit_model"
+    trainer.tracker.register_approved_model.assert_called_once_with(
+        "runs:/logistic_regression/model", "home_credit_model", 0.5
     )
-    trainer.tracker.initialize_production_version.assert_called_once_with(
-        "home_credit_model", "7"
+    trainer.tracker.promote_approved_model_version.assert_called_once_with(
+        "home_credit_model", "7", None
     )
     trainer.tracker.promote_latest_model_version.assert_not_called()
 
@@ -166,7 +166,7 @@ def test_reinitialization_preserves_published_reference(trainer, persisted_refer
         trainer.run()
     assert trainer.workflow.mock_calls == []
     assert trainer.evaluator.mock_calls == []
-    trainer.tracker.register_model.assert_not_called()
+    trainer.tracker.register_approved_model.assert_not_called()
     assert persisted_reference.read_bytes() == b"baseline-preservado"
 
 
@@ -177,13 +177,13 @@ def test_initialization_reuses_saved_baseline(trainer, persisted_reference):
         pytest tests/test_generate_baseline_model.py -k reuses_saved
     """
     trainer.tracker.model_alias_version.return_value = None
-    trainer.tracker.register_model.return_value = SimpleNamespace(version="8")
+    trainer.tracker.register_approved_model.return_value = SimpleNamespace(version="8")
     trainer.run()
-    trainer.tracker.register_model.assert_called_once_with(
-        "runs:/saved/model", "home_credit_model"
+    trainer.tracker.register_approved_model.assert_called_once_with(
+        "runs:/saved/model", "home_credit_model", 0.5
     )
-    trainer.tracker.initialize_production_version.assert_called_once_with(
-        "home_credit_model", "8"
+    trainer.tracker.promote_approved_model_version.assert_called_once_with(
+        "home_credit_model", "8", None
     )
     trainer.workflow.preparation.load_experiment.assert_called_once_with(
         trainer.processed_path

@@ -1,11 +1,12 @@
 """Registro reutilizável de experimentos com MLflow."""
 
+import fcntl
 import io
 import logging
 import warnings
 from contextlib import contextmanager, nullcontext, redirect_stderr, redirect_stdout
 from pathlib import Path
-from time import perf_counter
+from time import perf_counter, time
 from typing import Any
 
 import mlflow
@@ -13,6 +14,7 @@ import mlflow.sklearn
 from mlflow.tracking import MlflowClient
 
 from .model_evaluator import ModelEvaluator
+from .model_predictor import ModelPredictor
 from .structured_logging_configurator import StructuredLoggingConfigurator
 
 logger = logging.getLogger(__name__)
@@ -117,11 +119,9 @@ class ExperimentTracker:
             with tracker.workflow("credito", result):
                 tracker.step("carga", load_data, result)
         """
-        self.workflow_logger = StructuredLoggingConfigurator.file_logger(
-            f"workflow.{name}", Path(result["output_dir"]) / "workflow.jsonl"
-        )
         with self.run(name) as run:
             result["workflow_run_id"] = run.info.run_id
+            self._start_workflow(name, result)
             try:
                 yield
             except Exception as error:
@@ -131,34 +131,68 @@ class ExperimentTracker:
             finally:
                 self.save_workflow_result(result)
 
-    def step(self, name, action, result):
-        """Identifica e executa uma etapa dentro do contexto workflow.
+    def _start_workflow(self, name, result):
+        """Disponibiliza o estado inicial antes de executar a primeira etapa.
 
         Exemplo:
-            with tracker.workflow("credito", result):
-                tracker.step("carga", load_data, result)
+            tracker._start_workflow("credito", result)
+        """
+        self.workflow_logger = StructuredLoggingConfigurator.file_logger(
+            f"workflow.{name}", Path(result["output_dir"]) / "workflow.jsonl"
+        )
+        result.update(workflow_running=True, step_durations_seconds={})
+        self._save_workflow_snapshot(result)
+
+    def step(self, name, action, result):
+        """Executa uma etapa do workflow ativo e persiste estado, duração e falhas.
+
+        Exemplo:
+            tracker.step("carga", load_data, result)
         """
         result["stage"] = name
+        self._save_workflow_snapshot(result)
         self.workflow_logger.info(
             "Etapa iniciada.",
             extra={"etapa": name, "workflow_id": result["workflow_run_id"]},
         )
-        return action()
+        started = perf_counter()
+        try:
+            return action()
+        finally:
+            duration = perf_counter() - started
+            result["step_durations_seconds"][name] = duration
+            self._save_workflow_snapshot(result)
+            self.log(metrics={f"step_{name}_duration_seconds": duration})
+
+    def _save_workflow_snapshot(self, result):
+        """Publica JSON completo por troca atômica para os leitores de métricas.
+
+        Exemplo:
+            tracker._save_workflow_snapshot(result)
+        """
+        result["workflow_updated_timestamp_seconds"] = time()
+        destination = Path(result["output_dir"]) / "result.json"
+        temporary = destination.with_suffix(".json.tmp")
+        ModelEvaluator.save_report(result, temporary)
+        temporary.replace(destination)
 
     def save_workflow_result(self, result):
-        """Anexa resultado e log ao MLflow antes de encerrar a execução global.
+        """Anexa resultado, durações e log antes de encerrar a execução global.
 
         Exemplo:
             tracker.save_workflow_result(result)
         """
         directory = Path(result["output_dir"])
+        result["workflow_running"] = False
+        self._save_workflow_snapshot(result)
         self.workflow_logger.log(
             logging.ERROR if result["status"] == "falha" else logging.INFO,
             "Workflow encerrado.",
             extra=result,
         )
-        ModelEvaluator.save_report(result, directory / "result.json")
+        durations = result.get("step_durations_seconds", {})
         self.log(
+            metrics={f"step_{k}_duration_seconds": v for k, v in durations.items()},
             tags={"status": result["status"]},
             artifacts=[directory / "result.json", directory / "workflow.jsonl"],
         )
@@ -397,6 +431,116 @@ class ExperimentTracker:
             mlflow.set_tracking_uri(self.tracking_uri)
         return mlflow.register_model(model_uri=model_uri, name=model_name)
 
+    def approve_baseline_model(self, model_uri):
+        """Registra a escolha explícita do baseline inicial após verificar sua carga.
+
+        Exemplo:
+            tracker.approve_baseline_model(record["model_uri"])
+        """
+        client, run = self._model_run(model_uri, require_approval=False)
+        ModelPredictor.from_mlflow(model_uri, tracking_uri=self.tracking_uri)
+        for key, value in {
+            "approval_status": "approved",
+            "approval_model_uri": model_uri,
+            "approval_kind": "baseline_explicit",
+        }.items():
+            client.set_tag(run.info.run_id, key, value)
+
+    def _model_run(self, model_uri, require_approval=True):
+        """Confere a origem concluída e a aprovação vinculada ao artefato MLflow.
+
+        Exemplo:
+            client, run = tracker._model_run("models:/m-id")
+        """
+        if not model_uri.startswith("models:/m-"):
+            raise ValueError("A aprovação exige um artefato MLflow identificado.")
+        client = MlflowClient(tracking_uri=self.tracking_uri)
+        model = client.get_logged_model(model_uri.removeprefix("models:/"))
+        run = client.get_run(model.source_run_id)
+        if run.info.status != "FINISHED":
+            raise ValueError("O modelo exige uma execução concluída.")
+        if require_approval and (
+            run.data.tags.get("approval_status") != "approved"
+            or run.data.tags.get("approval_model_uri") != model_uri
+        ):
+            raise ValueError("O modelo exige aprovação vinculada ao seu artefato.")
+        return client, run
+
+    def register_approved_model(self, model_uri, name, threshold=0.5):
+        """Registra somente artefato aprovado, vinculando versão, decisão e origem.
+
+        Exemplo:
+            version = tracker.register_approved_model(uri, "credito", 0.5)
+        """
+        client, run = self._model_run(model_uri)
+        version = self.register_model(model_uri, name)
+        for key, value in {
+            "approval_status": "approved",
+            "approval_model_uri": model_uri,
+            "threshold": threshold,
+            "approval_kind": run.data.tags.get("approval_kind", "candidate"),
+        }.items():
+            client.set_model_version_tag(name, version.version, key, str(value))
+        return version
+
+    def model_version_threshold(self, name, version):
+        """Recupera o limiar escolhido na validação da versão publicada.
+
+        Exemplo:
+            threshold = tracker.model_version_threshold("credito", "2")
+        """
+        client = MlflowClient(tracking_uri=self.tracking_uri)
+        return float(client.get_model_version(name, version).tags["threshold"])
+
+    @contextmanager
+    def publication_lock(self):
+        """Serializa publicação e rollback no backend SQLite compartilhado.
+
+        Exemplo:
+            with tracker.publication_lock(): ...
+        """
+        if not self.tracking_uri.startswith("sqlite:///"):
+            raise ValueError("A publicação local exige backend SQLite compartilhado.")
+        path = Path(self.tracking_uri.removeprefix("sqlite:///"))
+        with path.with_suffix(".publication.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+
+    def promote_approved_model_version(self, name, version, expected_version):
+        """Publica a versão aprovada somente se a referência comparada ainda é ativa.
+
+        Exemplo:
+            tracker.promote_approved_model_version("credito", "2", "1")
+        """
+        with self.publication_lock():
+            uri, _ = ModelPredictor.resolve_approved_mlflow_uri(
+                f"models:/{name}/{version}", self.tracking_uri
+            )
+            ModelPredictor.from_mlflow(uri, tracking_uri=self.tracking_uri)
+            expected = str(expected_version) if expected_version is not None else None
+            if self.model_alias_version(name) != expected:
+                raise ValueError("Produção mudou; compare novamente antes de publicar.")
+            return self.promote_model_version(name, version)
+
+    def rollback_approved_model_version(self, name):
+        """Valida o modelo anterior antes de restaurar produção e preservar o atual.
+
+        Exemplo:
+            version = tracker.rollback_approved_model_version("credito")
+        """
+        with self.publication_lock():
+            version = self.model_alias_version(name, "production_rollback")
+            if version is None:
+                raise ValueError("O modelo não possui a versão de rollback.")
+            uri, _ = ModelPredictor.resolve_approved_mlflow_uri(
+                f"models:/{name}/{version}", self.tracking_uri
+            )
+            ModelPredictor.from_mlflow(uri, tracking_uri=self.tracking_uri)
+            return self.promote_model_version(name, version)
+
     def promote_latest_model_version(
         self,
         registered_model_name: str,
@@ -444,9 +588,32 @@ class ExperimentTracker:
         if alias == rollback_alias:
             raise ValueError("Os aliases de produção e rollback devem ser distintos.")
         current = self.model_alias_version(target.name, alias)
-        if current is not None and str(current) != str(target.version):
+        previous = self.model_alias_version(target.name, rollback_alias)
+        changed = current is not None and str(current) != str(target.version)
+        if changed:
             client.set_registered_model_alias(target.name, rollback_alias, current)
-        client.set_registered_model_alias(target.name, alias, str(target.version))
+        try:
+            client.set_registered_model_alias(target.name, alias, str(target.version))
+        except Exception:
+            if changed:
+                self._restore_alias(client, target.name, rollback_alias, previous)
+            raise
+
+    def _restore_alias(self, client, name, alias, version):
+        """Compensa falha de publicação e registra eventual falha de compensação.
+
+        Exemplo:
+            tracker._restore_alias(client, "credito", "previous", "1")
+        """
+        try:
+            if version is None:
+                client.delete_registered_model_alias(name, alias)
+            else:
+                client.set_registered_model_alias(name, alias, version)
+        except Exception:
+            logger.exception(
+                "Falha ao restaurar alias %s de %s para %s", alias, name, version
+            )
 
     def rollback_model_version(self, name):
         """Restaura o alias de rollback e preserva a versão que estava ativa.
