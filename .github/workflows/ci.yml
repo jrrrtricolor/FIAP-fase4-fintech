@@ -10,6 +10,9 @@ on:
 permissions:
   contents: read
 
+env:
+  REGISTRY: registry.fintech.juhouse.com.br
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -77,7 +80,7 @@ jobs:
       - name: Login no nosso registro Docker
         uses: docker/login-action@v3
         with:
-          registry: registry.fintech.juhouse.com.br
+          registry: ${{ env.REGISTRY }}
           username: ${{ secrets.CUSTOM_DOCKER_REGISTRY_USERNAME }}
           password: ${{ secrets.CUSTOM_DOCKER_REGISTRY_PASSWORD }}
 
@@ -86,7 +89,7 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          tags: fiap-fintech-${{ matrix.image }}:ci
+          tags: ${{ env.REGISTRY }}/fiap-fintech-${{ matrix.image }}:ci
           push: true
           load: true
           cache-from: type=gha,scope=${{ matrix.image }}
@@ -95,7 +98,7 @@ jobs:
       - name: Validar dependências e imports na imagem
         run: |
           docker run --rm --network none --entrypoint '${{ matrix.python }}' \
-            fiap-fintech-${{ matrix.image }}:ci -m pip check
+            ${{ env.REGISTRY }}/fiap-fintech-${{ matrix.image }}:ci -m pip check
           docker run --rm --network none --entrypoint '${{ matrix.python }}' \
-            fiap-fintech-${{ matrix.image }}:ci -c \
+            ${{ env.REGISTRY }}/fiap-fintech-${{ matrix.image }}:ci -c \
             'from ml_prep_kit import DriftMonitor, HomeCreditData; from src.credit_monitoring.api import app'
