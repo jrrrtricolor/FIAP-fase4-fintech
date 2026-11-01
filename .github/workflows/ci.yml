@@ -52,7 +52,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      REGISTRY: registry.fintech.juhouse.com.br
+      REGISTRY: https://registry.fintech.juhouse.com.br
     strategy:
       fail-fast: false
       matrix:
@@ -81,10 +81,10 @@ jobs:
           password: ${{ secrets.CUSTOM_DOCKER_REGISTRY_PASSWORD }}
 
       - name: Preparar Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+        uses: docker/setup-buildx-action@v4 # v4
 
       - name: Construir e subir imagem
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        uses: docker/build-push-action@v7 # v7
         env:
           BUILDKIT_NO_CLIENT_TOKEN: "true"
         with:
