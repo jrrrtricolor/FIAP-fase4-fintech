@@ -87,6 +87,7 @@ jobs:
         uses: docker/build-push-action@v7 # v7
         env:
           BUILDKIT_NO_CLIENT_TOKEN: "true"
+          DOCKER_AUTH_CONFIG: ""
         with:
           context: .
           file: ${{ matrix.dockerfile }}
