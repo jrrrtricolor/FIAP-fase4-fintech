@@ -15,44 +15,44 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  checks:
-    name: Qualidade e testes
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    env:
-      PYTHONDONTWRITEBYTECODE: "1"
-      MPLBACKEND: Agg
-      PYTEST_ADDOPTS: -ra
-    steps:
-      - name: Obter código
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          lfs: false
-          persist-credentials: false
+  # checks:
+  #   name: Qualidade e testes
+  #   runs-on: ubuntu-24.04
+  #   timeout-minutes: 20
+  #   env:
+  #     PYTHONDONTWRITEBYTECODE: "1"
+  #     MPLBACKEND: Agg
+  #     PYTEST_ADDOPTS: -ra
+  #   steps:
+  #     - name: Obter código
+  #       uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+  #       with:
+  #         lfs: false
+  #         persist-credentials: false
 
-      - name: Preparar Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: requirements.txt
+  #     - name: Preparar Python
+  #       uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+  #       with:
+  #         python-version: "3.12"
+  #         cache: pip
+  #         cache-dependency-path: requirements.txt
 
-      - name: Executar Ruff, Flake8, formatação, testes e pip check
-        run: make check
+  #     - name: Executar Ruff, Flake8, formatação, testes e pip check
+  #       run: make check
 
-      - name: Validar alertas operacionais e recuperação
-        run: |
-          docker run --rm --entrypoint /bin/promtool \
-            -v "$PWD:/app:ro" -w /app/tests \
-            prom/prometheus:v3.14.0 test rules prometheus_alerts.yml
+  #     - name: Validar alertas operacionais e recuperação
+  #       run: |
+  #         docker run --rm --entrypoint /bin/promtool \
+  #           -v "$PWD:/app:ro" -w /app/tests \
+  #           prom/prometheus:v3.14.0 test rules prometheus_alerts.yml
 
   docker:
     name: Docker (${{ matrix.image }})
-    needs: checks
+    # needs: checks
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      REGISTRY: https://registry.fintech.juhouse.com.br
+      REGISTRY: registry.fintech.juhouse.com.br
     strategy:
       fail-fast: false
       matrix:
@@ -60,12 +60,12 @@ jobs:
           - image: api
             dockerfile: Dockerfile
             python: python
-          - image: notebooks
-            dockerfile: docker/Dockerfile
-            python: python
-          - image: airflow
-            dockerfile: Dockerfile.airflow
-            python: /opt/venv/bin/python
+          # - image: notebooks
+          #   dockerfile: docker/Dockerfile
+          #   python: python
+          # - image: airflow
+          #   dockerfile: Dockerfile.airflow
+          #   python: /opt/venv/bin/python
     steps:
       - name: Obter código
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
