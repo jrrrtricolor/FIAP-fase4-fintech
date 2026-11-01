@@ -10,9 +10,6 @@ on:
 permissions:
   contents: read
 
-env:
-  REGISTRY: registry.fintech.juhouse.com.br
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -54,6 +51,8 @@ jobs:
     needs: checks
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      REGISTRY: registry.fintech.juhouse.com.br
     strategy:
       fail-fast: false
       matrix:
@@ -86,6 +85,8 @@ jobs:
 
       - name: Construir e subir imagem
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        env:
+          BUILDKIT_NO_CLIENT_TOKEN: "true"
         with:
           context: .
           file: ${{ matrix.dockerfile }}
