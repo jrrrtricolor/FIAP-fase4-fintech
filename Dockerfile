@@ -24,8 +24,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH="/app:/app/src:/app/ml_prep_kit/src" \
     MLFLOW_TRACKING_URI="sqlite:////app/data/processed/monitoring/mlflow.db" \
     MLFLOW_ARTIFACT_LOCATION="" \
-    AWS_ACCESS_KEY_ID="" \
-    AWS_SECRET_ACCESS_KEY="" \
     AWS_DEFAULT_REGION=""
 
 WORKDIR /app
@@ -40,6 +38,7 @@ RUN apt-get update \
 COPY --from=builder /opt/venv /opt/venv
 COPY --chown=app:root src ./src
 COPY --chown=app:root ml_prep_kit ./ml_prep_kit
+COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 
 # Modelos, banco e relatórios são montados em runtime, sem congelá-los na imagem.
 USER app
@@ -48,5 +47,7 @@ EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 
 CMD ["uvicorn", "src.credit_monitoring.api:app", "--host", "0.0.0.0", "--port", "8000"]

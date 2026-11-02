@@ -15,8 +15,6 @@ x-airflow-common:
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-api-server:8080/execution/
     MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-sqlite:////app/data/processed/monitoring/mlflow.db}
     MLFLOW_ARTIFACT_LOCATION: ${MLFLOW_ARTIFACT_LOCATION:-}
-    AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-    AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
     AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-}
   volumes:
     - ${AIRFLOW_PROJ_DIR:-.}/airflow/dags:/opt/airflow/dags
@@ -25,6 +23,9 @@ x-airflow-common:
     - ${AIRFLOW_PROJ_DIR:-.}/airflow/plugins:/opt/airflow/plugins
     - ${AIRFLOW_PROJ_DIR:-.}/data:/app/data
   user: "${AIRFLOW_UID:-50000}:0"
+  secrets:
+    - aws_access_key_id
+    - aws_secret_access_key
   depends_on:
     &airflow-common-depends-on
     postgres:
@@ -100,7 +101,7 @@ services:
         chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins /opt/airflow/config
         mkdir -p /app/data/processed
         chown -R "${AIRFLOW_UID:-50000}:0" /app/data/processed
-        exec /entrypoint airflow version
+        exec /usr/local/bin/entrypoint.sh /entrypoint airflow version
     environment:
       <<: *airflow-common-env
       _AIRFLOW_DB_MIGRATE: 'true'
@@ -119,11 +120,12 @@ services:
     environment:
       MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-sqlite:////app/data/processed/monitoring/mlflow.db}
       MLFLOW_ARTIFACT_LOCATION: ${MLFLOW_ARTIFACT_LOCATION:-}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-}
     volumes:
       - ${AIRFLOW_PROJ_DIR:-.}/data/processed:/app/data/processed
+    secrets:
+      - aws_access_key_id
+      - aws_secret_access_key
 
   # Linux: perfil opcional com acesso aos recursos do host.
   cadvisor:
@@ -186,3 +188,9 @@ volumes:
   prometheus_data:
   grafana_data:
   postgres-db-volume:
+
+secrets:
+  aws_access_key_id:
+    environment: AWS_ACCESS_KEY_ID
+  aws_secret_access_key:
+    environment: AWS_SECRET_ACCESS_KEY
