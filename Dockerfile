@@ -22,7 +22,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     VIRTUAL_ENV=/opt/venv \
     PATH="/opt/venv/bin:${PATH}" \
     PYTHONPATH="/app:/app/src:/app/ml_prep_kit/src" \
-    MLFLOW_TRACKING_URI=sqlite:////app/data/processed/monitoring/mlflow.db
+
+ENV MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-sqlite:////app/data/processed/monitoring/mlflow.db}
 
 WORKDIR /app
 

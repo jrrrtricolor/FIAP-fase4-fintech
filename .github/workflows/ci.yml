@@ -130,7 +130,7 @@ jobs:
           git config --global user.name "github-actions"
           git config --global user.email "github-actions@github.com"
           git add k8s/deployment.yml
-          git commit -m "feat(k8s): [skip ci] Atualizar tag da imagem para ${{ github.sha }}"
+          git commit --allow-empty -m "feat(k8s): [skip ci] Atualizar tag da imagem para ${{ github.sha }}"
           git push
 
       - name: Connectar ao cluster k8s via WireGuard VPN
