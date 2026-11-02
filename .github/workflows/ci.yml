@@ -114,12 +114,13 @@ jobs:
     name: Deploy da imagem de api gerada
     runs-on: ubuntu-24.04
     needs: docker
+    permissions:
+      contents: write
     steps:
       - name: Obter código
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           lfs: false
-          persist-credentials: false
 
       - name: Atualizar tag da imagem nos arquivos de configuração do Kubernetes
         run: |
