@@ -133,7 +133,7 @@ jobs:
           git push
 
       - name: Connectar ao cluster k8s via WireGuard VPN
-        uses: ankurk91/wireguard-action@v2
+        uses: ankurk91/wireguard-action@v1
         with:
           wireguard-config: ${{ secrets.K8S_CLUSTER_WIREGUARD_CONFIG }}
 
