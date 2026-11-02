@@ -212,7 +212,9 @@ Os dados brutos entram por volume; as imagens usam estágios e cache de dependê
 ### Airflow e nuvem
 
 O [Compose](docker-compose.yml) e o [Dockerfile do Airflow](Dockerfile.airflow)
-preparam a infraestrutura, mas ainda não há DAG de agendamento. As futuras tarefas
+preparam a infraestrutura. A DAG [generate_baseline_model](airflow/dags/generate_baseline_model_dag.py)
+(disparo manual) executa [prepare_baseline.sh](airflow/dags/scripts/prepare_baseline.sh)
+e depois `generate_baseline_model.py`, herdando `MLFLOW_ARTIFACT_LOCATION`. As tarefas
 devem usar `/opt/venv/bin/python` (`CREDIT_PYTHON`), com diretório de execução `/app`.
 O ambiente Python próprio do Airflow permanece separado. O deploy na AWS está pendente.
 
