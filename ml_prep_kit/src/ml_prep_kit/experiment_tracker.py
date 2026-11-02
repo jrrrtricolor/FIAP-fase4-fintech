@@ -1,6 +1,5 @@
 """Registro reutilizável de experimentos com MLflow."""
 
-import fcntl
 import io
 import logging
 import warnings
