@@ -60,12 +60,15 @@ jobs:
           - image: api
             dockerfile: Dockerfile
             python: python
+            push: true
           - image: notebooks
             dockerfile: docker/Dockerfile
             python: python
+            push: false
           - image: airflow
             dockerfile: Dockerfile.airflow
             python: /opt/venv/bin/python
+            push: false
     steps:
       - name: Obter código
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -90,8 +93,10 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          tags: ${{ env.REGISTRY }}/fiap-fintech-${{ matrix.image }}:ci
-          push: true
+          tags: |
+            ${{ env.REGISTRY }}/fiap-fintech-${{ matrix.image }}:ci
+            ${{ env.REGISTRY }}/fiap-fintech-${{ matrix.image }}:${{ github.sha }}
+          push: ${{ matrix.push }}
           load: true
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
@@ -103,3 +108,51 @@ jobs:
           docker run --rm --network none --entrypoint '${{ matrix.python }}' \
             ${{ env.REGISTRY }}/fiap-fintech-${{ matrix.image }}:ci -c \
             'from ml_prep_kit import DriftMonitor, HomeCreditData; from src.credit_monitoring.api import app'
+
+  deploy:
+    name: Deploy da imagem de api gerada
+    runs-on: ubuntu-24.04
+    needs: docker
+    steps:
+      - name: Obter código
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          lfs: false
+          persist-credentials: false
+
+      - name: Atualizar tag da imagem nos arquivos de configuração do Kubernetes
+        run: |
+          sed -i "s|image: ${{ env.REGISTRY }}/fiap-fintech-api:.*|image: ${{ env.REGISTRY }}/fiap-fintech-api:${{ github.sha }}|g" k8s/deployment.yml
+
+      - name: Commit e push das alterações no Kubernetes
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "github-actions@github.com"
+          git add k8s/deployment.yml
+          git commit -m "feat(k8s): [skip ci] Atualizar tag da imagem para ${{ github.sha }}"
+          git push
+
+      - name: Connectar ao cluster k8s via WireGuard VPN
+        uses: ankurk91/wireguard-action@v2
+        with:
+          wireguard-config: ${{ secrets.K8S_CLUSTER_WIREGUARD_CONFIG }}
+
+      - name: Preparar Kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'latest' # Or match your specific cluster version
+
+      - name: Definir Contexto do Kubernetes
+        uses: azure/k8s-set-context@v4
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.K8S_KUBECTL_CONFIG }}
+
+      - name: Deploy da imagem para o Kubernetes
+        run: |
+          kubectl apply -f k8s/deployment.yml --namespace=fiap-fintech-api
+          kubectl apply -f k8s/service.yml --namespace=fiap-fintech-api
+
+      - name: Verificar Deploy
+        run: |
+          kubectl rollout status deployment/fiap-fintech-api --namespace=fiap-fintech-api
