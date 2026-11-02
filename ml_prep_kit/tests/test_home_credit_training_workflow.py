@@ -139,3 +139,18 @@ def test_scaling_ignores_validation_and_test_data(workflow):
     for model in models.values():
         scaler = model["preprocessor"].named_transformers_["num"]["min_max_scaler"]
         np.testing.assert_allclose(scaler.data_max_, expected)
+
+
+def test_workflow_forwards_explicit_tracking_uri(tmp_path, monkeypatch):
+    uri = f"sqlite:///{tmp_path / 'shared.db'}"
+    factory = Mock(return_value=Mock())
+    monkeypatch.setattr(
+        "ml_prep_kit.home_credit_training_workflow.ExperimentTracker.from_directory",
+        factory,
+    )
+
+    HomeCreditTrainingWorkflow(
+        tmp_path, tmp_path, "test", sample_size=10, tracking_uri=uri
+    )
+
+    assert factory.call_args.kwargs["tracking_uri"] == uri

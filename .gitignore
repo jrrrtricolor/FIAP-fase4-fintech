@@ -16,3 +16,4 @@ mlruns/
 !/data/raw/home-credit-default-risk/HomeCredit_columns_description.csv
 /data/processed/
 /model
+/airflow/logs

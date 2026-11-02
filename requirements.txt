@@ -25,3 +25,5 @@ prometheus-client==0.26.0
 prometheus-fastapi-instrumentator==8.1.0
 uvicorn==0.54.0
 httpx==0.28.1
+psycopg==3.3.6
+boto3==1.43.123

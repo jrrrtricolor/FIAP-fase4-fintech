@@ -32,6 +32,7 @@ class HomeCreditTrainingWorkflow:
         random_state=42,
         model_parameters=None,
         artifact_location=None,
+        tracking_uri=None,
     ):
         """Define origem, amostra e armazenamento SQL dos experimentos.
 
@@ -39,7 +40,11 @@ class HomeCreditTrainingWorkflow:
             workflow = HomeCreditTrainingWorkflow("raw", "processed", "credito")
         """
         self.configure_storage(
-            raw_directory, processed_directory, experiment_name, artifact_location
+            raw_directory,
+            processed_directory,
+            experiment_name,
+            artifact_location,
+            tracking_uri,
         )
         self.preparation = HomeCreditData(sample_size, random_state)
         self.feature_columns = self.preparation.features
@@ -51,6 +56,7 @@ class HomeCreditTrainingWorkflow:
         processed_directory,
         experiment_name,
         artifact_location=None,
+        tracking_uri=None,
     ):
         """Define caminhos e o estado inicial das etapas do experimento.
 
@@ -65,6 +71,7 @@ class HomeCreditTrainingWorkflow:
             self.processed_directory / "monitoring",
             "training_artifacts",
             artifact_location=artifact_location,
+            tracking_uri=tracking_uri,
         )
         self.source_hash = self.clean_df = self.partitions = self.datasets = None
         self.models, self.training_records = {}, {}

@@ -754,3 +754,15 @@ def test_candidate_rejection_is_recorded_without_changing_reference(trained_vers
     saved = json.loads((Path(result["output_dir"]) / "result.json").read_text())
     assert saved["approval"]["approved"] is False
     assert saved["comparison"] == result["comparison"]
+
+
+def test_credit_monitoring_forwards_tracking_uri(tmp_path, monkeypatch):
+    """Exemplo: pytest tests/test_credit_monitoring.py -k forwards_tracking."""
+    uri = f"sqlite:///{tmp_path / 'shared.db'}"
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", uri)
+    factory = Mock(return_value=Mock())
+    monkeypatch.setattr(ExperimentTracker, "from_directory", factory)
+
+    CreditMonitoring(tmp_path)
+
+    assert factory.call_args.kwargs["tracking_uri"] == uri

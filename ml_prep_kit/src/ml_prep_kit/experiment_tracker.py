@@ -78,8 +78,9 @@ class ExperimentTracker:
         directory,
         artifact_subdir="artifacts",
         artifact_location=None,
+        tracking_uri=None,
     ):
-        """Configura tracking local em SQLite.
+        """Configura tracking local em SQLite, salvo `tracking_uri` explícito.
         Exemplo: ExperimentTracker.from_directory("credito", "monitoring").
         """
         directory = Path(directory).resolve()
@@ -87,7 +88,7 @@ class ExperimentTracker:
         artifact_dir.mkdir(parents=True, exist_ok=True)
         return cls(
             experiment_name,
-            tracking_uri=f"sqlite:///{directory / 'mlflow.db'}",
+            tracking_uri=tracking_uri or f"sqlite:///{directory / 'mlflow.db'}",
             artifact_location=artifact_location or artifact_dir.as_uri(),
         )
 
@@ -494,38 +495,20 @@ class ExperimentTracker:
         client = MlflowClient(tracking_uri=self.tracking_uri)
         return float(client.get_model_version(name, version).tags["threshold"])
 
-    @contextmanager
-    def publication_lock(self):
-        """Serializa publicação e rollback no backend SQLite compartilhado.
-
-        Exemplo:
-            with tracker.publication_lock(): ...
-        """
-        if not self.tracking_uri.startswith("sqlite:///"):
-            raise ValueError("A publicação local exige backend SQLite compartilhado.")
-        path = Path(self.tracking_uri.removeprefix("sqlite:///"))
-        with path.with_suffix(".publication.lock").open("a") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
-                fcntl.flock(lock, fcntl.LOCK_UN)
-
     def promote_approved_model_version(self, name, version, expected_version):
         """Publica a versão aprovada somente se a referência comparada ainda é ativa.
 
         Exemplo:
             tracker.promote_approved_model_version("credito", "2", "1")
         """
-        with self.publication_lock():
-            uri, _ = ModelPredictor.resolve_approved_mlflow_uri(
-                f"models:/{name}/{version}", self.tracking_uri
-            )
-            ModelPredictor.from_mlflow(uri, tracking_uri=self.tracking_uri)
-            expected = str(expected_version) if expected_version is not None else None
-            if self.model_alias_version(name) != expected:
-                raise ValueError("Produção mudou; compare novamente antes de publicar.")
-            return self.promote_model_version(name, version)
+        uri, _ = ModelPredictor.resolve_approved_mlflow_uri(
+            f"models:/{name}/{version}", self.tracking_uri
+        )
+        ModelPredictor.from_mlflow(uri, tracking_uri=self.tracking_uri)
+        expected = str(expected_version) if expected_version is not None else None
+        if self.model_alias_version(name) != expected:
+            raise ValueError("Produção mudou; compare novamente antes de publicar.")
+        return self.promote_model_version(name, version)
 
     def rollback_approved_model_version(self, name):
         """Valida o modelo anterior antes de restaurar produção e preservar o atual.
@@ -533,15 +516,14 @@ class ExperimentTracker:
         Exemplo:
             version = tracker.rollback_approved_model_version("credito")
         """
-        with self.publication_lock():
-            version = self.model_alias_version(name, "production_rollback")
-            if version is None:
-                raise ValueError("O modelo não possui a versão de rollback.")
-            uri, _ = ModelPredictor.resolve_approved_mlflow_uri(
-                f"models:/{name}/{version}", self.tracking_uri
-            )
-            ModelPredictor.from_mlflow(uri, tracking_uri=self.tracking_uri)
-            return self.promote_model_version(name, version)
+        version = self.model_alias_version(name, "production_rollback")
+        if version is None:
+            raise ValueError("O modelo não possui a versão de rollback.")
+        uri, _ = ModelPredictor.resolve_approved_mlflow_uri(
+            f"models:/{name}/{version}", self.tracking_uri
+        )
+        ModelPredictor.from_mlflow(uri, tracking_uri=self.tracking_uri)
+        return self.promote_model_version(name, version)
 
     def promote_latest_model_version(
         self,

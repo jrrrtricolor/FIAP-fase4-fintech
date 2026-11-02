@@ -82,6 +82,7 @@ class CreditMonitoring:
             self.processed_dir / "monitoring",
             "credit_artifacts",
             artifact_location=os.environ.get("MLFLOW_ARTIFACT_LOCATION") or None,
+            tracking_uri=os.environ.get("MLFLOW_TRACKING_URI") or None,
         )
 
     def step(self, name, action):

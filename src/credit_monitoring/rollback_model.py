@@ -15,7 +15,7 @@ def rollback_production_model():
         version = rollback_production_model()
     """
     database = Path.cwd() / "data/processed/monitoring/mlflow.db"
-    uri = os.environ.get("MLFLOW_TRACKING_URI", f"sqlite:///{database}")
+    uri = os.environ.get("MLFLOW_TRACKING_URI") or f"sqlite:///{database}"
     tracker = ExperimentTracker(
         "tech-challenge-4-credit-monitoring",
         tracking_uri=uri,

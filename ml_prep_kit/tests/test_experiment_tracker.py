@@ -43,3 +43,13 @@ def test_from_directory_keeps_default_artifact_location(tmp_path):
     assert experiment.artifact_location == (
         (tmp_path / "tracking" / "artifacts").as_uri()
     )
+
+
+def test_from_directory_uses_explicit_tracking_uri(tmp_path):
+    uri = f"sqlite:///{tmp_path / 'shared.db'}"
+
+    tracker = ExperimentTracker.from_directory(
+        "explicit-uri", tmp_path / "tracking", tracking_uri=uri
+    )
+
+    assert tracker.tracking_uri == uri

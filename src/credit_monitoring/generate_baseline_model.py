@@ -30,6 +30,7 @@ class BaselineModelTrainer:
             sample_size=sample_size,
             random_state=random_state,
             artifact_location=os.environ.get("MLFLOW_ARTIFACT_LOCATION") or None,
+            tracking_uri=os.environ.get("MLFLOW_TRACKING_URI") or None,
         )
         self.evaluator = ModelEvaluator()
         self.tracker = self.workflow.tracker

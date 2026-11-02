@@ -205,3 +205,16 @@ def test_initialization_reuses_saved_baseline(trainer, persisted_reference):
     )
     assert trainer.evaluator.mock_calls == []
     assert persisted_reference.read_bytes() == b"baseline-preservado"
+
+
+def test_baseline_trainer_forwards_tracking_uri(tmp_path, monkeypatch):
+    uri = f"sqlite:///{tmp_path / 'shared.db'}"
+    factory = Mock(return_value=Mock())
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", uri)
+    monkeypatch.setattr(
+        "credit_monitoring.generate_baseline_model.HomeCreditTrainingWorkflow", factory
+    )
+
+    BaselineModelTrainer(project_root=tmp_path)
+
+    assert factory.call_args.kwargs["tracking_uri"] == uri
