@@ -15,6 +15,8 @@ spec:
       labels:
         app: fiap-fintech-api
     spec:
+      imagePullSecrets:
+      - name: regcred
       containers:
       - name: fiap-fintech-api
         image: registry.fintech.juhouse.com.br/fiap-fintech-api:902b76ac735884eccd6d3a6db6b4fd6e2e83a33f
