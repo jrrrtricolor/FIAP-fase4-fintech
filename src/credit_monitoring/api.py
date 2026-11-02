@@ -156,9 +156,9 @@ def replace_model(application):
     try:
         state.active_model = state.model_loader()
         state.reload_error = False
-    except Exception:
+    except Exception as e:
         state.reload_error = True
-        LOGGER.exception("falha_ao_carregar_modelo")
+        LOGGER.exception("falha_ao_carregar_modelo", e)
         discard_revoked_model(application)
     publish_model_metrics(application)
 
