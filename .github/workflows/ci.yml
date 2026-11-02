@@ -158,4 +158,4 @@ jobs:
 
       - name: Verificar Deploy
         run: |
-          kubectl rollout status deployment/fiap-fintech-api --namespace=fiap-fintech-api
+          kubectl rollout status deployment/fiap-fintech-api-deployment --namespace=fiap-fintech-api
