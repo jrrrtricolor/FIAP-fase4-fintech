@@ -31,18 +31,27 @@ class HomeCreditTrainingWorkflow:
         sample_size=20_000,
         random_state=42,
         model_parameters=None,
+        artifact_location=None,
     ):
         """Define origem, amostra e armazenamento SQL dos experimentos.
 
         Exemplo:
             workflow = HomeCreditTrainingWorkflow("raw", "processed", "credito")
         """
-        self.configure_storage(raw_directory, processed_directory, experiment_name)
+        self.configure_storage(
+            raw_directory, processed_directory, experiment_name, artifact_location
+        )
         self.preparation = HomeCreditData(sample_size, random_state)
         self.feature_columns = self.preparation.features
         self.model_parameters = dict(model_parameters or self.DEFAULT_MODEL_PARAMETERS)
 
-    def configure_storage(self, raw_directory, processed_directory, experiment_name):
+    def configure_storage(
+        self,
+        raw_directory,
+        processed_directory,
+        experiment_name,
+        artifact_location=None,
+    ):
         """Define caminhos e o estado inicial das etapas do experimento.
 
         Exemplo:
@@ -55,6 +64,7 @@ class HomeCreditTrainingWorkflow:
             experiment_name,
             self.processed_directory / "monitoring",
             "training_artifacts",
+            artifact_location=artifact_location,
         )
         self.source_hash = self.clean_df = self.partitions = self.datasets = None
         self.models, self.training_records = {}, {}

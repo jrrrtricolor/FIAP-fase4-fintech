@@ -7,6 +7,21 @@ import pytest
 
 from credit_monitoring.generate_baseline_model import BaselineModelTrainer
 
+
+def test_baseline_trainer_forwards_artifact_location(tmp_path, monkeypatch):
+    location = (tmp_path / "shared-artifacts").as_uri()
+    workflow = Mock()
+    factory = Mock(return_value=workflow)
+    monkeypatch.setenv("MLFLOW_ARTIFACT_LOCATION", location)
+    monkeypatch.setattr(
+        "credit_monitoring.generate_baseline_model.HomeCreditTrainingWorkflow", factory
+    )
+
+    BaselineModelTrainer(project_root=tmp_path)
+
+    assert factory.call_args.kwargs["artifact_location"] == location
+
+
 REPORTS = {
     "dummy": {"teste": {"metrics": {"recall": 0.0}}},
     "logistic_regression": {"teste": {"metrics": {"recall": 0.7}}},

@@ -357,6 +357,9 @@ make check
 
 Para os componentes opcionais, execute `make install-ml-prep`. Use o Docker no
 roteiro do avaliador para manter consistentes os caminhos do banco e dos artefatos.
+Para definir a localização dos artefatos em novos experimentos, configure
+`MLFLOW_ARTIFACT_LOCATION` no ambiente de execução. Os comandos de treinamento,
+monitoramento e rollback encaminham esse valor para `ml_prep_kit`.
 
 ### Consultar o MLflow
 

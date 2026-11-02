@@ -72,13 +72,15 @@ class ExperimentTracker:
         mlflow.set_experiment(experiment_name)
 
     @classmethod
-    def from_directory(cls, experiment_name, directory, artifact_subdir="artifacts"):
-        """Configura tracking local em SQLite e artefatos em uma pasta separada.
-
-        Exemplo:
-            tracker = ExperimentTracker.from_directory(
-                "credito", "data/processed/monitoring", "training_artifacts"
-            )
+    def from_directory(
+        cls,
+        experiment_name,
+        directory,
+        artifact_subdir="artifacts",
+        artifact_location=None,
+    ):
+        """Configura tracking local em SQLite.
+        Exemplo: ExperimentTracker.from_directory("credito", "monitoring").
         """
         directory = Path(directory).resolve()
         artifact_dir = directory / artifact_subdir
@@ -86,7 +88,7 @@ class ExperimentTracker:
         return cls(
             experiment_name,
             tracking_uri=f"sqlite:///{directory / 'mlflow.db'}",
-            artifact_location=artifact_dir.as_uri(),
+            artifact_location=artifact_location or artifact_dir.as_uri(),
         )
 
     @contextmanager

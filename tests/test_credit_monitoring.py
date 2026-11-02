@@ -133,6 +133,18 @@ def baseline_tracker(directory):
     )
 
 
+def test_credit_monitoring_forwards_artifact_location(tmp_path, monkeypatch):
+    """Exemplo: pytest tests/test_credit_monitoring.py -k forwards_artifact."""
+    location = (tmp_path / "shared-artifacts").as_uri()
+    monkeypatch.setenv("MLFLOW_ARTIFACT_LOCATION", location)
+    factory = Mock(return_value=Mock())
+    monkeypatch.setattr(ExperimentTracker, "from_directory", factory)
+
+    CreditMonitoring(tmp_path)
+
+    assert factory.call_args.kwargs["artifact_location"] == location
+
+
 def save_baseline(data, directory, partitions, tracker):
     """Persiste partições e modelo original para a atualização da v2.
 

@@ -14,6 +14,7 @@ aprovação no mesmo teste reservado; a versão anterior permite rollback.
 
 import argparse
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -66,11 +67,7 @@ class CreditMonitoring:
     """
 
     def __init__(self, processed_dir, data_path=None, drift_parameters=None):
-        """Define entradas e uma saída exclusiva para preservar a referência.
-
-        Exemplo:
-            workflow = CreditMonitoring("data/processed")
-        """
+        """Define entradas. Exemplo: CreditMonitoring("data/processed")."""
         self.processed_dir = Path(processed_dir).resolve()
         self.data_path = Path(data_path or self.processed_dir / "credit_scoring_v2.csv")
         self.drift_parameters = drift_parameters or {}
@@ -81,7 +78,10 @@ class CreditMonitoring:
         self.output_dir.mkdir(parents=True, exist_ok=False)
         self.result = {"status": "iniciado", "output_dir": str(self.output_dir)}
         self.tracker = ExperimentTracker.from_directory(
-            EXPERIMENT_NAME, self.processed_dir / "monitoring", "credit_artifacts"
+            EXPERIMENT_NAME,
+            self.processed_dir / "monitoring",
+            "credit_artifacts",
+            artifact_location=os.environ.get("MLFLOW_ARTIFACT_LOCATION") or None,
         )
 
     def step(self, name, action):

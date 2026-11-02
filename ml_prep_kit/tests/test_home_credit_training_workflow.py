@@ -55,6 +55,25 @@ def workflow(tmp_path, monkeypatch):
     return workflow
 
 
+def test_workflow_forwards_explicit_artifact_location(tmp_path, monkeypatch):
+    location = (tmp_path / "shared-artifacts").as_uri()
+    factory = Mock(return_value=Mock())
+    monkeypatch.setattr(
+        "ml_prep_kit.home_credit_training_workflow.ExperimentTracker.from_directory",
+        factory,
+    )
+
+    HomeCreditTrainingWorkflow(
+        tmp_path,
+        tmp_path,
+        "test",
+        sample_size=10,
+        artifact_location=location,
+    )
+
+    assert factory.call_args.kwargs["artifact_location"] == location
+
+
 def test_training_records_share_source_and_split_metadata(workflow):
     """Associa modelos e runs ao mesmo recorte e à origem dos dados.
 

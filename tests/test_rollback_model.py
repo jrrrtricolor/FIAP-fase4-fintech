@@ -221,6 +221,19 @@ def test_approved_publication_and_command_rollback(publication, monkeypatch):
     assert ModelPredictor.from_mlflow(uri, tracking_uri=tracker.tracking_uri)
 
 
+def test_rollback_forwards_artifact_location(monkeypatch, tmp_path):
+    """Exemplo: pytest tests/test_rollback_model.py -k forwards_artifact."""
+    location = (tmp_path / "shared-artifacts").as_uri()
+    monkeypatch.setenv("MLFLOW_ARTIFACT_LOCATION", location)
+    tracker = Mock()
+    factory = Mock(return_value=tracker)
+    monkeypatch.setattr("credit_monitoring.rollback_model.ExperimentTracker", factory)
+
+    rollback_production_model()
+
+    assert factory.call_args.kwargs["artifact_location"] == location
+
+
 def test_changed_reference_blocks_stale_candidate(publication):
     """Uma publicação concorrente exige nova comparação antes de trocar produção.
 

@@ -1,5 +1,6 @@
 """Produz o baseline compartilhado pelos notebooks, pelo workflow e pela API."""
 
+import os
 from pathlib import Path
 
 from ml_prep_kit import HomeCreditTrainingWorkflow, ModelEvaluator
@@ -28,6 +29,7 @@ class BaselineModelTrainer:
             "tech-challenge-4-fintech-training",
             sample_size=sample_size,
             random_state=random_state,
+            artifact_location=os.environ.get("MLFLOW_ARTIFACT_LOCATION") or None,
         )
         self.evaluator = ModelEvaluator()
         self.tracker = self.workflow.tracker
