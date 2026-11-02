@@ -134,15 +134,16 @@ jobs:
           git commit --allow-empty -m "feat(k8s): [skip ci] Atualizar tag da imagem para ${{ github.sha }}"
           git push
 
+      - name: Preparar Kubectl
+        uses: azure/setup-kubectl@v4
+        id: install
+        with:
+          version: 'latest' # Or match your specific cluster version
+
       - name: Connectar ao cluster k8s via WireGuard VPN
         uses: ankurk91/wireguard-action@v1
         with:
           config: ${{ secrets.K8S_CLUSTER_WIREGUARD_CONFIG }}
-
-      - name: Preparar Kubectl
-        uses: azure/setup-kubectl@v4
-        with:
-          version: 'latest' # Or match your specific cluster version
 
       - name: Definir Contexto do Kubernetes
         uses: azure/k8s-set-context@v4
