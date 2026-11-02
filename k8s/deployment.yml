@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: fiap-fintech-api
-        image: registry.fintech.juhouse.com.br/fiap-fintech-api:41c5a00e213c185c0f841fa3f3ee005e8e467f45
+        image: registry.fintech.juhouse.com.br/fiap-fintech-api:359ed51b690154e1f93458ba52ba0b5dd83def0e
         env:
         - name: MLFLOW_TRACKING_URI
           valueFrom:
