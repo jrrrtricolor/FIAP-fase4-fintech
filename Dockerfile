@@ -21,13 +21,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     LC_ALL=C.UTF-8 \
     VIRTUAL_ENV=/opt/venv \
     PATH="/opt/venv/bin:${PATH}" \
-    PYTHONPATH="/app:/app/src:/app/ml_prep_kit/src"
-
-ENV MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-sqlite:////app/data/processed/monitoring/mlflow.db}
-
-ENV AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-} \
-    AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-} \
-    AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-}
+    PYTHONPATH="/app:/app/src:/app/ml_prep_kit/src" \
+    MLFLOW_TRACKING_URI="sqlite:////app/data/processed/monitoring/mlflow.db" \
+    MLFLOW_ARTIFACT_LOCATION="" \
+    AWS_ACCESS_KEY_ID="" \
+    AWS_SECRET_ACCESS_KEY="" \
+    AWS_DEFAULT_REGION=""
 
 WORKDIR /app
 
