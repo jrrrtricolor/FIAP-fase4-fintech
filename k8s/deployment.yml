@@ -24,6 +24,21 @@ spec:
             configMapKeyRef:
               name: mlflowcm
               key: mlflow_tracking_uri
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            configMapKeyRef:
+              name: awss3cm
+              key: aws_access_key_id
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            configMapKeyRef:
+              name: awss3cm
+              key: aws_secret_access_key
+        - name: AWS_DEFAULT_REGION
+          valueFrom:
+            configMapKeyRef:
+              name: awss3cm
+              key: aws_default_region
         ports:
         - containerPort: 8000
         resources:

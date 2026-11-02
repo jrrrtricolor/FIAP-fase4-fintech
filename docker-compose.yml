@@ -13,7 +13,11 @@ x-airflow-common:
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
     AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: 'true'
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-api-server:8080/execution/
-    MLFLOW_TRACKING_URI: sqlite:////app/data/processed/monitoring/mlflow.db
+    MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-sqlite:////app/data/processed/monitoring/mlflow.db}
+    MLFLOW_ARTIFACT_LOCATION: ${MLFLOW_ARTIFACT_LOCATION:-}
+    AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+    AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-}
   volumes:
     - ${AIRFLOW_PROJ_DIR:-.}/airflow/dags:/opt/airflow/dags
     - ${AIRFLOW_PROJ_DIR:-.}/airflow/logs:/opt/airflow/logs
