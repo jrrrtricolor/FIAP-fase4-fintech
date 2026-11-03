@@ -19,7 +19,7 @@ candidato quando há alertas. O foco é a sustentação e a confiabilidade do mo
 | CI | [GitHub Actions](https://github.com/jrrrtricolor/FIAP-fase4-fintech/actions/workflows/ci.yml) |
 | Enunciado oficial | [Tech Challenge — Fase 4](docs/MLET%20-%20Tech%20Challenge%20-%20Fase%204.pdf) |
 | Governança e causalidade | [Plano neste README](#governança-e-causalidade) |
-| Vídeo STAR | Pendente — demonstração de até cinco minutos |
+| Vídeo STAR | [Demonstração](https://www.youtube.com/watch?v=Y-UV4_MptyY) |
 
 ## Roteiro do avaliador
 
