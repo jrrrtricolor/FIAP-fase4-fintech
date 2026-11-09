@@ -9,3 +9,11 @@ __pycache__/
 .ruff_cache/
 .ipynb_checkpoints/
 mlruns/
+/data/raw/*
+!/data/raw/home-credit-default-risk/
+/data/raw/home-credit-default-risk/*
+!/data/raw/home-credit-default-risk/application_train.csv
+!/data/raw/home-credit-default-risk/HomeCredit_columns_description.csv
+/data/processed/
+/model
+/airflow/logs

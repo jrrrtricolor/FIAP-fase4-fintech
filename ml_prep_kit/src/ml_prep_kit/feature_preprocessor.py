@@ -86,9 +86,7 @@ class FeaturePreprocessor:
                     ),
                 ]
             )
-            transformers.append(
-                ("num", numeric_pipeline, self.numeric_columns)
-            )
+            transformers.append(("num", numeric_pipeline, self.numeric_columns))
 
         if self.categorical_columns:
             categorical_pipeline = Pipeline(
@@ -104,9 +102,7 @@ class FeaturePreprocessor:
                     ),
                 ]
             )
-            transformers.append(
-                ("cat", categorical_pipeline, self.categorical_columns)
-            )
+            transformers.append(("cat", categorical_pipeline, self.categorical_columns))
 
         self.transformer = ColumnTransformer(transformers)
         self.transformer = self.transformer.set_output(transform="pandas")

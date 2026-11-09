@@ -4,6 +4,13 @@ from importlib import import_module
 from typing import Any
 
 _EXPORTS = {
+    "DriftMonitor": ("drift_monitor", "DriftMonitor"),
+    "HomeCreditData": ("home_credit_data", "HomeCreditData"),
+    "HomeCreditDataV1Schema": ("home_credit_data", "HomeCreditDataV1Schema"),
+    "HomeCreditTrainingWorkflow": (
+        "home_credit_training_workflow",
+        "HomeCreditTrainingWorkflow",
+    ),
     "CategoricalStore": ("categorical_store", "CategoricalStore"),
     "CSVDataLoader": ("csv_data_loader", "CSVDataLoader"),
     "DataValidator": ("data_validator", "DataValidator"),
@@ -52,7 +59,12 @@ __all__ = list(_EXPORTS)
 
 
 def __getattr__(name: str) -> Any:
-    """Importa somente o componente solicitado pelo consumidor."""
+    """Importa somente o componente solicitado pelo consumidor.
+
+    Exemplo:
+        from ml_prep_kit import DataValidator
+        validator = DataValidator()
+    """
     if name not in _EXPORTS:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 

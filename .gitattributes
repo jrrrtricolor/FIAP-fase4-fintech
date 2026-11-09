@@ -1,0 +1,3 @@
+data/raw/home-credit-default-risk/application_train.csv filter=lfs diff=lfs merge=lfs -text
+# Preserva a codificação e as quebras de linha do dicionário original.
+data/raw/home-credit-default-risk/HomeCredit_columns_description.csv -text -whitespace

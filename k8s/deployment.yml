@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fiap-fintech-api-deployment
+  namespace: fiap-fintech-api
+  labels:
+    app: fiap-fintech-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fiap-fintech-api
+  template:
+    metadata:
+      labels:
+        app: fiap-fintech-api
+    spec:
+      imagePullSecrets:
+      - name: regcred
+      containers:
+      - name: fiap-fintech-api
+        image: registry.fintech.juhouse.com.br/fiap-fintech-api:25c5646c61940e99929c80d7279e0ce656d25d43
+        env:
+        - name: MLFLOW_TRACKING_URI
+          valueFrom:
+            configMapKeyRef:
+              name: mlflowcm
+              key: mlflow_tracking_uri
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            configMapKeyRef:
+              name: awss3cm
+              key: aws_access_key_id
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            configMapKeyRef:
+              name: awss3cm
+              key: aws_secret_access_key
+        - name: AWS_DEFAULT_REGION
+          valueFrom:
+            configMapKeyRef:
+              name: awss3cm
+              key: aws_default_region
+        ports:
+        - containerPort: 8000
+        resources:
+          limits:
+            cpu: "500m"
+            memory: "1Gi"
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8000  
+          initialDelaySeconds: 5
+          periodSeconds: 10

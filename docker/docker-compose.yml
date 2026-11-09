@@ -1,0 +1,11 @@
+services:
+  notebook:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: ${IMAGE:-fiap-fase4-fintech}:${TAG:-dev}
+    ports:
+      - "8888:8888"
+    volumes:
+      - ..:/app
+    working_dir: /app

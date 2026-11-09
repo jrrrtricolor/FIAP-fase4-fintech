@@ -1,0 +1,838 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum(http_requests_total)",
+          "legendFormat": "Requisições",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Requisições totais",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum(total_de_erros_na_api_total)",
+          "legendFormat": "Erros",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Erros totais",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 3,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(duracao_da_predicao_segundos_bucket[5m])))",
+          "legendFormat": "p95",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Duração da predição (p95)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.5
+              },
+              {
+                "color": "green",
+                "value": 0.75
+              }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 4,
+      "options": {
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum(rate(confianca_da_predicao_sum[5m])) / sum(rate(confianca_da_predicao_count[5m]))",
+          "legendFormat": "Confiança média",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Confiança média (5 min)",
+      "type": "gauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "id": 5,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "expr": "credit_monitoring_drift_share",
+          "legendFormat": "{{scenario}}",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "title": "Variáveis com drift (%)",
+      "type": "timeseries",
+      "description": "Resultado estatístico do Evidently persistido pelo DriftMonitor. Ausência de série significa ausência de avaliação válida."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "id": 6,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "expr": "credit_monitoring_drifted_features",
+          "legendFormat": "{{scenario}}",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "title": "Quantidade de variáveis com drift",
+      "type": "timeseries",
+      "description": "Resultado estatístico do Evidently persistido pelo DriftMonitor. Ausência de série significa ausência de avaliação válida."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "unit": "short",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "id": 7,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "expr": "credit_monitoring_drift_alert",
+          "legendFormat": "Drift / {{scenario}}",
+          "refId": "A",
+          "range": true
+        },
+        {
+          "expr": "credit_monitoring_performance_alert",
+          "legendFormat": "Desempenho / {{scenario}}",
+          "refId": "B",
+          "range": true
+        }
+      ],
+      "title": "Alertas: drift e desempenho (1 = alerta)",
+      "type": "timeseries",
+      "description": "Desempenho só é publicado quando há rótulos e comparação disponível. Um alerta não promove automaticamente o candidato."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "Sem avaliação",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 6,
+        "h": 8
+      },
+      "id": 8,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "credit_monitoring_quality_passed",
+          "legendFormat": "{{scenario}}",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "Contrato aprovado (1 = sim)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "Sem avaliação",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 24,
+        "w": 6,
+        "h": 8
+      },
+      "id": 9,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "credit_monitoring_summary_available",
+          "legendFormat": "Disponível",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "Sumário disponível (1 = sim)",
+      "type": "stat",
+      "description": "Zero indica arquivo ausente ou inválido. Consulte credit_monitoring_summary_read_error para distinguir falha de leitura."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dateTimeAsIso",
+          "noValue": "Sem avaliação válida"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 24,
+        "h": 4
+      },
+      "id": 10,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "expr": "credit_monitoring_last_evaluation_timestamp_seconds * 1000",
+          "legendFormat": "Avaliação de drift",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        },
+        {
+          "expr": "credit_monitoring_workflow_updated_timestamp_seconds * 1000",
+          "legendFormat": "Workflow",
+          "refId": "B",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "Horários da avaliação e do workflow",
+      "type": "stat",
+      "description": "Horários persistidos da avaliação de drift e da atualização do workflow. Relatórios legados usam a data do arquivo."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "id": 11,
+      "title": "Variáveis afetadas pelo drift",
+      "type": "table",
+      "description": "Variáveis com drift igual a 1 em cada cenário. Consulte a disponibilidade do sumário para distinguir ausência de drift de ausência de avaliação.",
+      "gridPos": {
+        "x": 0,
+        "y": 36,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "targets": [
+        {
+          "expr": "credit_monitoring_feature_drift == 1",
+          "instant": true,
+          "range": false,
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "filterFieldsByName",
+          "options": {
+            "include": {
+              "names": [
+                "scenario",
+                "feature"
+              ]
+            }
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "scenario": "Cenário",
+              "feature": "Variável"
+            },
+            "indexByName": {
+              "scenario": 0,
+              "feature": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "unit": "short",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 44,
+        "w": 12,
+        "h": 8
+      },
+      "id": 12,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "expr": "up{job=\"credit_monitoring\"}",
+          "legendFormat": "API acessível",
+          "refId": "A",
+          "range": true
+        },
+        {
+          "expr": "credit_monitoring_api_ready",
+          "legendFormat": "Modelo pronto",
+          "refId": "B",
+          "range": true
+        },
+        {
+          "expr": "credit_monitoring_model_reload_error",
+          "legendFormat": "Falha de recarga",
+          "refId": "C",
+          "range": true
+        },
+        {
+          "expr": "credit_monitoring_workflow_failed",
+          "legendFormat": "Workflow falhou",
+          "refId": "D",
+          "range": true
+        },
+        {
+          "expr": "credit_monitoring_workflow_running",
+          "legendFormat": "Workflow em execução",
+          "refId": "E",
+          "range": true
+        },
+        {
+          "expr": "credit_monitoring_workflow_read_error",
+          "legendFormat": "Resultado ilegível",
+          "refId": "F",
+          "range": true
+        }
+      ],
+      "title": "Estado da API e do workflow (1 = ativo)",
+      "type": "timeseries",
+      "description": "Disponibilidade, prontidão e execução indicam atividade; os demais sinais indicam falha. Ausência de série não significa sucesso."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 44,
+        "w": 12,
+        "h": 8
+      },
+      "id": 13,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "expr": "credit_monitoring_stage_duration_seconds",
+          "legendFormat": "{{stage}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Duração das etapas da última execução",
+      "type": "timeseries",
+      "description": "Duração persistida de cada etapa concluída ou interrompida por falha. O alerta usa 600 segundos como limite inicial."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 52,
+        "w": 24,
+        "h": 8
+      },
+      "id": 14,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (instance) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",id=\"/\"}[5m])) / on(instance) (machine_cpu_cores{job=\"cadvisor\"} > 0)",
+          "legendFormat": "CPU / {{instance}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "expr": "container_memory_working_set_bytes{job=\"cadvisor\",id=\"/\"} / on(instance) (machine_memory_bytes{job=\"cadvisor\"} > 0)",
+          "legendFormat": "Memória / {{instance}}",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "expr": "container_fs_usage_bytes{job=\"cadvisor\",id=\"/\",device=~\"/dev/.+\"} / (container_fs_limit_bytes{job=\"cadvisor\",id=\"/\",device=~\"/dev/.+\"} > 0)",
+          "legendFormat": "Disco {{device}} / {{instance}}",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "Recursos do Docker (%)",
+      "type": "timeseries",
+      "description": "CPU, memória e disco do host Linux ou da VM Docker Desktop. Requer perfil infra com cAdvisor. Ausência de série indica cobertura indisponível, não consumo zero."
+    }
+  ],
+  "refresh": "15s",
+  "schemaVersion": 41,
+  "tags": [
+    "fiap",
+    "credit-monitoring"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "Monitor de score de crédito — API e drift",
+  "uid": "credit-monitoring-api",
+  "version": 5
+}

@@ -1,0 +1,768 @@
+"""Verifica contratos, isolamento e rastreamento do monitoramento de crédito."""
+
+import ast
+import json
+import sqlite3
+import subprocess
+import sys
+from pathlib import Path
+from unittest.mock import Mock
+
+import numpy as np
+import pandas as pd
+import pandera.pandas as pa
+import pytest
+from mlflow.tracking import MlflowClient
+
+from credit_monitoring import EXPERIMENT_NAME, CreditMonitoring, run_workflow
+from ml_prep_kit import (
+    ExperimentTracker,
+    FeaturePreprocessor,
+    HomeCreditData,
+    ModelEvaluator,
+    ModelFactory,
+    ModelPredictor,
+)
+
+
+def sample_data():
+    """Gera dados rotulados e anuidade ausente para testar imputação e drift.
+
+    Exemplo:
+        frame = sample_data()
+    """
+    rng = np.random.default_rng(42)
+    age = rng.uniform(20, 75, 1000)
+    frame = pd.DataFrame({"SK_ID_CURR": np.arange(1000), "AGE_YEARS": age})
+    return frame.assign(
+        TARGET=(age > 45).astype(int),
+        AMT_INCOME_TOTAL=rng.lognormal(10, 0.5, 1000),
+        AMT_CREDIT=rng.lognormal(12, 0.5, 1000),
+        AMT_ANNUITY=np.where(np.arange(1000) % 7 == 0, np.nan, 500.0),
+        CNT_CHILDREN=np.zeros(1000, dtype=int),
+        **sample_categories(),
+    )
+
+
+def test_sampling_preserves_size_balance_and_reproducibility():
+    """A amostra usa o número de registros, preservando a proporção das classes.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k sampling
+    """
+    source = sample_data()
+    data = HomeCreditData(sample_size=100)
+    selected = data.sample(source)
+    assert len(selected) == 100
+    assert selected.TARGET.mean() == pytest.approx(source.TARGET.mean(), abs=0.01)
+    pd.testing.assert_frame_equal(selected, data.sample(source))
+
+
+@pytest.mark.parametrize("column,value", [("TARGET", 2), ("AMT_INCOME_TOTAL", 0)])
+def test_shared_contract_rejects_invalid_target_and_zero_amount(column, value):
+    """O contrato compartilhado conserva as regras dos dados preparados.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k shared_contract
+    """
+    frame = sample_data()
+    frame.loc[0, column] = value
+    with pytest.raises(pa.errors.SchemaErrors):
+        HomeCreditData().contract.validate(frame, lazy=True)
+
+
+@pytest.mark.parametrize("module", ["src.credit_monitoring", "credit_monitoring"])
+def test_both_command_entrypoints_remain_available(module):
+    """Mantém os comandos documentados antes da reorganização em pacote.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k entrypoints
+    """
+    result = subprocess.run(
+        [sys.executable, "-m", module, "--help"],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    )
+    assert "--recovery-demo" in result.stdout
+
+
+def sample_categories():
+    """Define atributos categóricos constantes para isolar as mudanças numéricas.
+
+    Exemplo:
+        categories = sample_categories()
+    """
+    return {
+        "NAME_INCOME_TYPE": "Working",
+        "NAME_EDUCATION_TYPE": "Secondary",
+        "NAME_HOUSING_TYPE": "House",
+        "FLAG_OWN_CAR": np.ones(1000, dtype=int),
+        "FLAG_OWN_REALTY": np.zeros(1000, dtype=int),
+    }
+
+
+def baseline_model(data):
+    """Monta o pipeline usado como modelo original nos testes.
+
+    Exemplo:
+        model = baseline_model(HomeCreditData())
+    """
+    preprocessor = FeaturePreprocessor(
+        data.numeric_features,
+        data.categorical_features,
+        data.binary_features,
+    ).create_pipeline()
+    return ModelFactory().create_pipeline(
+        preprocessor,
+        "classification",
+        "logistic_regression",
+        {"max_iter": 500, "class_weight": "balanced"},
+    )
+
+
+def baseline_tracker(directory):
+    """Cria o mesmo backend SQLite utilizado pelos notebooks e pelo workflow.
+
+    Exemplo:
+        tracker = baseline_tracker(directory)
+    """
+    return ExperimentTracker.from_directory(
+        "v1", directory / "monitoring", "baseline_artifacts"
+    )
+
+
+def test_credit_monitoring_forwards_artifact_location(tmp_path, monkeypatch):
+    """Exemplo: pytest tests/test_credit_monitoring.py -k forwards_artifact."""
+    location = (tmp_path / "shared-artifacts").as_uri()
+    monkeypatch.setenv("MLFLOW_ARTIFACT_LOCATION", location)
+    factory = Mock(return_value=Mock())
+    monkeypatch.setattr(ExperimentTracker, "from_directory", factory)
+
+    CreditMonitoring(tmp_path)
+
+    assert factory.call_args.kwargs["artifact_location"] == location
+
+
+def save_baseline(data, directory, partitions, tracker):
+    """Persiste partições e modelo original para a atualização da v2.
+
+    Exemplo:
+        save_baseline(data, directory, partitions, tracker)
+    """
+    train = partitions["treino"]
+    record = tracker.train_model(
+        "v1", baseline_model(data), train[data.features], train[data.target]
+    )
+    metadata = {
+        "threshold": 0.5,
+        "tracking_uri": tracker.tracking_uri,
+        "training_run_id": record["run_id"],
+        "model_uri": record["model_uri"],
+        "source_sha256": "synthetic",
+        "random_state": 42,
+        "sample_size": 1000,
+    }
+    data.save_experiment(directory, partitions, metadata)
+
+
+@pytest.fixture
+def baseline(tmp_path):
+    """Disponibiliza uma referência isolada, com modelo e banco persistidos.
+
+    Exemplo:
+        def test_versions(baseline):
+            data, directory, original = baseline
+    """
+    data, original = HomeCreditData(sample_size=1000), sample_data()
+    directory = tmp_path / "processed"
+    tracker = baseline_tracker(directory)
+    save_baseline(data, directory, data.split(original), tracker)
+    return data, directory, original
+
+
+def write_shifted_data(data, directory, original):
+    """Gera drift e um extremo em produção para revelar vazamento no scaler.
+
+    Exemplo:
+        write_shifted_data(data, directory, original)
+    """
+    reference = data.load_experiment(directory)
+    production_id = reference["partitions"]["producao"].iloc[0]["SK_ID_CURR"]
+    shifted = data.create_drift_version(original, income_factor=0.3, credit_factor=2)
+    shifted.loc[shifted["SK_ID_CURR"].eq(production_id), "AMT_CREDIT"] = 1e15
+    shifted["NAME_INCOME_TYPE"] = " Working "
+    shifted.sample(frac=1, random_state=7).to_csv(
+        directory / "credit_scoring_v2.csv", index=False
+    )
+
+
+@pytest.fixture
+def trained_version(baseline):
+    """Executa a atualização e preserva a assinatura da referência para comparação.
+
+    Exemplo:
+        def test_candidate(trained_version):
+            data, directory, result, original_hash = trained_version
+    """
+    data, directory, original = baseline
+    original_hash = data.source_hash(directory / "experiment.joblib")
+    write_shifted_data(data, directory, original)
+    return data, directory, run_workflow(directory), original_hash
+
+
+def test_training_preserves_baseline_and_partition_membership(trained_version):
+    """Confere que a v2 não modifica a referência nem move IDs entre partições.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k partition_membership
+    """
+    data, directory, result, original_hash = trained_version
+    reference = data.load_experiment(directory)
+    restored = data.load_experiment(result["output_dir"])
+    assert result["status"] == "treinado"
+    assert data.source_hash(directory / "experiment.joblib") == original_hash
+    for name, part in reference["partitions"].items():
+        assert (
+            restored["partitions"][name]["SK_ID_CURR"].tolist()
+            == part["SK_ID_CURR"].tolist()
+        )
+    assert set(restored["partitions"]["treino"]["NAME_INCOME_TYPE"]) == {"Working"}
+
+
+def test_retraining_does_not_publish_candidate(trained_version):
+    """Treinar e registrar evidências não substitui o modelo servido pela API.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k publish_candidate
+    """
+    _, _, result, _ = trained_version
+    client = MlflowClient(tracking_uri=result["tracking_uri"])
+    assert result["status"] == "treinado"
+    assert list(client.search_registered_models()) == []
+
+
+def test_normalization_uses_training_data_only(trained_version):
+    """Garante que o extremo de produção não participa do ajuste do Min-Max.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k normalization
+    """
+    data, _, result, _ = trained_version
+    restored = data.load_experiment(result["output_dir"])
+    predictor = ModelPredictor.from_mlflow(
+        result["model_uri"], tracking_uri=restored["tracking_uri"]
+    )
+    numeric = predictor.model.named_steps["preprocessor"].named_transformers_["num"]
+    np.testing.assert_allclose(
+        numeric.named_steps["min_max_scaler"].data_max_,
+        restored["partitions"]["treino"][data.numeric_features].max(),
+    )
+    sizes = {metrics["sample_size"] for metrics in result["comparison"].values()}
+    assert sizes == {100}
+
+
+def test_mlflow_persists_metrics_in_database_and_links_runs(trained_version):
+    """Consulta o SQLite para comprovar persistência e confere a linhagem no MLflow.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k database
+    """
+    data, directory, result, _ = trained_version
+    reference = data.load_experiment(directory)
+    run = MlflowClient().get_run(result["training_run_id"])
+    assert run.data.tags["baseline_run_id"] == reference["training_run_id"]
+    assert run.data.tags["mlflow.parentRunId"] == result["workflow_run_id"]
+    database = directory / "monitoring/mlflow.db"
+    with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as connection:
+        metric = connection.execute(
+            "SELECT value FROM metrics WHERE run_uuid = ? AND key = 'teste_roc_auc'",
+            (result["training_run_id"],),
+        ).fetchone()
+    assert metric[0] == pytest.approx(result["comparison"]["v2"]["roc_auc"])
+
+
+def test_no_alert_skips_training_and_saves_global_outcome(baseline, monkeypatch):
+    """Confere a ausência de retreinamento e o registro do desfecho sem drift.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k no_alert
+    """
+    _, directory, original = baseline
+    original.to_csv(directory / "credit_scoring_v2.csv", index=False)
+    train = Mock(side_effect=AssertionError("Não deveria treinar."))
+    monkeypatch.setattr(CreditMonitoring, "train_model", train)
+    result = run_workflow(directory)
+    train.assert_not_called()
+    assert result["status"] == "sem_drift"
+    assert not (Path(result["output_dir"]) / "experiment.joblib").exists()
+    run = MlflowClient().get_run(result["workflow_run_id"])
+    assert run.info.status == "FINISHED" and run.data.tags["status"] == "sem_drift"
+
+
+def test_monitoring_preserves_lineage_and_evidence(trained_version):
+    """Confere a ligação entre workflow, cenários e candidato e os relatórios salvos.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k monitoring_preserves
+    """
+    _, _, result, _ = trained_version
+    client = MlflowClient()
+    monitoring = client.get_run(result["monitoring_run_id"])
+    training = client.get_run(result["training_run_id"])
+    assert monitoring.data.tags["mlflow.parentRunId"] == result["workflow_run_id"]
+    assert training.data.tags["monitoring_run_id"] == monitoring.info.run_id
+    children = client.search_runs(
+        [monitoring.info.experiment_id],
+        filter_string=f"tags.`mlflow.parentRunId` = '{monitoring.info.run_id}'",
+    )
+    assert {run.info.run_name for run in children} == {"controle", "data_drift"}
+    assert all(run.info.status == "FINISHED" for run in children)
+    artifacts = {item.path for item in client.list_artifacts(monitoring.info.run_id)}
+    assert {"histogramas.png", "summary.json", "pipeline.jsonl"} <= artifacts
+
+
+def invalid_data(original, problem):
+    """Introduz uma violação por caso, preservando o DataFrame original.
+
+    Exemplo:
+        invalid = invalid_data(original, "invalid_target")
+    """
+    invalid = original.copy(deep=True)
+    if problem == "invalid_income":
+        invalid.loc[0, "AMT_INCOME_TOTAL"] = np.nan
+    elif problem == "missing_id":
+        invalid = invalid.iloc[1:]
+    else:
+        invalid.loc[0, "TARGET"] = 2
+    return invalid
+
+
+@pytest.mark.parametrize("problem", ["invalid_income", "missing_id", "invalid_target"])
+def test_invalid_version_is_blocked_before_model_loading(
+    baseline, monkeypatch, problem
+):
+    """Bloqueia a base inválida e registra a execução completa como falha.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k invalid_version
+    """
+    _, directory, original = baseline
+    invalid_data(original, problem).to_csv(
+        directory / "credit_scoring_v2.csv", index=False
+    )
+    load = Mock(side_effect=AssertionError("Não deveria carregar o modelo."))
+    monkeypatch.setattr(ModelPredictor, "from_mlflow", load)
+    with pytest.raises((ValueError, pa.errors.SchemaErrors)):
+        run_workflow(directory)
+    load.assert_not_called()
+    experiment = MlflowClient().get_experiment_by_name(EXPERIMENT_NAME)
+    runs = MlflowClient().search_runs([experiment.experiment_id])
+    assert len(runs) == 1 and runs[0].info.status == "FAILED"
+
+
+def test_performance_alert_triggers_training_without_feature_drift(baseline):
+    """Confere que uma mudança dos desfechos também aciona treinamento.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k performance_alert
+    """
+    _, directory, original = baseline
+    concept = original.copy(deep=True)
+    concept["TARGET"] = 1 - concept["TARGET"]
+    concept.to_csv(directory / "credit_scoring_v2.csv", index=False)
+    result = run_workflow(directory)
+    assert result["alerts"] == {"drift_alert": 0, "performance_alert": 1}
+    assert result["status"] == "treinado"
+
+
+def test_evaluation_failure_marks_training_and_workflow_failed(baseline, monkeypatch):
+    """Confere falha global quando a avaliação é interrompida depois do fit.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k evaluation_failure
+    """
+    data, directory, original = baseline
+    write_shifted_data(data, directory, original)
+    failure = Mock(side_effect=RuntimeError("Falha simulada depois do fit"))
+    monkeypatch.setattr(ModelEvaluator, "evaluate_models", failure)
+    with pytest.raises(RuntimeError, match="Falha simulada"):
+        run_workflow(directory)
+    result = json.loads(
+        next((directory / "credit_monitoring").glob("*/result.json")).read_text()
+    )
+    assert result["status"] == "falha" and result["failed_stage"] == "avaliacao"
+    for name in ("workflow_run_id", "training_run_id"):
+        assert MlflowClient().get_run(result[name]).info.status == "FAILED"
+    assert "model_uri" not in result
+
+
+def test_missing_baseline_is_recorded_in_mlflow(tmp_path):
+    """Confere que uma falha na carga também chega ao banco e ao resultado local.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k missing_baseline
+    """
+    directory = tmp_path / "processed"
+    with pytest.raises(FileNotFoundError):
+        run_workflow(directory)
+    result = json.loads(
+        next((directory / "credit_monitoring").glob("*/result.json")).read_text()
+    )
+    assert result["failed_stage"] == "carga"
+    assert MlflowClient().get_run(result["workflow_run_id"]).info.status == "FAILED"
+
+
+def assert_documented_short_functions(path, names=None):
+    """Verifica o limite físico, incluindo assinatura, docstring e comentários.
+
+    Exemplo:
+        assert_documented_short_functions(Path("src/credit_monitoring/__main__.py"))
+    """
+    for node in ast.walk(ast.parse(path.read_text())):
+        if isinstance(node, ast.FunctionDef) and (names is None or node.name in names):
+            assert node.end_lineno - node.lineno + 1 <= 20, f"{path}: {node.name}"
+            assert "Exemplo:" in (ast.get_docstring(node) or ""), node.name
+
+
+@pytest.mark.parametrize(
+    "filename,names",
+    [
+        ("src/credit_monitoring/credit_monitoring.py", None),
+        ("tests/test_credit_monitoring.py", None),
+        (
+            "ml_prep_kit/src/ml_prep_kit/home_credit_data.py",
+            {
+                "prepare_version",
+                "_clean_version",
+                "_align_version",
+                "model_datasets",
+                "monitoring_batch",
+                "retraining_readiness",
+            },
+        ),
+        (
+            "ml_prep_kit/src/ml_prep_kit/experiment_tracker.py",
+            {
+                "run",
+                "workflow",
+                "step",
+                "save_workflow_result",
+                "log_evaluation",
+                "from_directory",
+                "fit_model",
+                "train_model",
+            },
+        ),
+        (
+            "ml_prep_kit/src/ml_prep_kit/model_evaluator.py",
+            {"save_evaluation", "_save_evaluation_tables"},
+        ),
+    ],
+)
+def test_changed_functions_have_examples_and_at_most_twenty_lines(filename, names):
+    """Impede regressão do padrão de documentação e tamanho acordado no projeto.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k twenty_lines
+    """
+    root = Path(__file__).resolve().parents[1]
+    assert_documented_short_functions(root / filename, names)
+
+
+def test_model_datasets_exclude_identifiers_target_and_production():
+    """Garante isolamento de produção e ausência de ID e alvo nas features.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k model_datasets
+    """
+    data = HomeCreditData()
+    partitions = data.split(sample_data())
+    datasets = data.model_datasets(partitions)
+    assert set(datasets) == {"treino", "validacao", "teste"}
+    for name, (features, target) in datasets.items():
+        assert list(features.columns) == data.features
+        pd.testing.assert_series_equal(target, partitions[name][data.target])
+        assert not set(features.index) & set(partitions["producao"].index)
+    with pytest.raises(ValueError, match="sobreposição"):
+        data.model_datasets(dict(partitions, teste=partitions["treino"]))
+
+
+@pytest.fixture
+def evaluation_tables():
+    """Fornece um relatório real e tabelas pequenas para testar sua persistência.
+
+    Exemplo:
+        def test_report(evaluation_tables):
+            assert "reports" in evaluation_tables
+    """
+    report = ModelEvaluator().evaluate_binary_classification([0, 1], [0.1, 0.8])
+    return {
+        "reports": {"modelo": {"teste": report}},
+        "global_metrics": pd.DataFrame([report["metrics"]]),
+        "class_metrics": report["by_class"],
+        "scores": {"modelo": {"teste": np.array([0.1, 0.8])}},
+    }
+
+
+@pytest.fixture(params=[False, True])
+def exported_evaluation(request, tmp_path, evaluation_tables):
+    """Exporta avaliações com e sem intervalos para verificar as duas formas de uso.
+
+    Exemplo:
+        def test_export(exported_evaluation):
+            directory, with_intervals = exported_evaluation
+    """
+    intervals = pd.DataFrame({"metric": ["roc_auc"], "lower": [0.9], "upper": [1.0]})
+    thresholds = pd.DataFrame({"threshold": [0.5], "f1": [1.0]})
+    ModelEvaluator().save_evaluation(
+        evaluation_tables,
+        intervals if request.param else None,
+        thresholds,
+        {},
+        tmp_path,
+    )
+    return tmp_path, request.param
+
+
+def test_evaluation_export_omits_individual_scores(exported_evaluation):
+    """Verifica relatório completo e ausência dos scores individuais no JSON.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k omits_individual
+    """
+    directory, with_intervals = exported_evaluation
+    saved = json.loads((directory / "classification_report.json").read_text())
+    assert saved["reports"]["modelo"]["teste"]["metrics"]["roc_auc"] == 1.0
+    assert "scores" not in saved
+    assert (saved["confidence_intervals"] is not None) == with_intervals
+
+
+def test_evaluation_export_preserves_tables(exported_evaluation, evaluation_tables):
+    """Confere métricas e gravação de intervalos apenas quando calculados.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k preserves_tables
+    """
+    directory, with_intervals = exported_evaluation
+    assert (directory / "confidence_intervals.csv").exists() == with_intervals
+    expected = evaluation_tables["global_metrics"]
+    pd.testing.assert_frame_equal(
+        pd.read_csv(directory / "global_metrics.csv", index_col=0), expected
+    )
+    assert (directory / "metrics_by_class.csv").exists()
+    assert (directory / "threshold_metrics.csv").exists()
+
+
+def test_evaluation_without_intervals_removes_previous_interval_table(
+    tmp_path, evaluation_tables
+):
+    """Evita apresentar intervalos de uma execução anterior como evidência atual.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k previous_interval
+    """
+    evaluator = ModelEvaluator()
+    intervals = pd.DataFrame({"metric": ["roc_auc"], "lower": [0.9], "upper": [1.0]})
+    evaluator.save_evaluation(evaluation_tables, intervals, None, {}, tmp_path)
+    evaluator.save_evaluation(evaluation_tables, None, None, {}, tmp_path)
+    assert not (tmp_path / "confidence_intervals.csv").exists()
+    saved = json.loads((tmp_path / "classification_report.json").read_text())
+    assert saved["confidence_intervals"] is None
+
+
+def test_fit_requires_tracking_before_modifying_model(tmp_path):
+    """Bloqueia ajuste sem execução ativa, evitando modelos sem rastreabilidade.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k fit_requires
+    """
+    tracker = ExperimentTracker.from_directory("fit", tmp_path)
+    model = Mock()
+    with pytest.raises(RuntimeError, match="tracker.run"):
+        tracker.fit_model(model, [[0], [1]], [0, 1])
+    model.fit.assert_not_called()
+
+
+def test_recovery_preserves_baseline_and_partition_features(baseline):
+    """Executa a recuperação sem v2, preservando a referência e os IDs das partições.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k recovery_preserves
+    """
+    data, directory, _ = baseline
+    original_hash = data.source_hash(directory / "experiment.joblib")
+    result = run_workflow(directory, recovery=True, auc_drop_threshold=0.001)
+    original = data.load_experiment(directory)["partitions"]
+    candidate = data.load_experiment(result["output_dir"])["partitions"]
+    columns = ["SK_ID_CURR", *data.features]
+    assert not (directory / "credit_scoring_v2.csv").exists()
+    assert result["alerts"] == {"drift_alert": 0, "performance_alert": 1}
+    assert result["simulation"]["changed_labels"] > 0
+    assert data.source_hash(directory / "experiment.joblib") == original_hash
+    for name, part in candidate.items():
+        expected = original[name][columns].reset_index(drop=True)
+        pd.testing.assert_frame_equal(part[columns], expected, rtol=1e-12)
+
+
+def test_recovery_rejects_ambiguous_input(tmp_path):
+    """Impede substituir silenciosamente o CSV informado pela versão simulada.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k ambiguous_input
+    """
+    with pytest.raises(ValueError, match="separadamente"):
+        run_workflow(tmp_path, data_path="current.csv", recovery=True)
+    assert not (tmp_path / "credit_monitoring").exists()
+
+
+def assert_retraining_skipped(result, reason):
+    """Confere que a decisão de adiar o treino foi persistida sem criar candidato.
+
+    Exemplo:
+        assert_retraining_skipped(result, "rotulos_indisponiveis")
+    """
+    assert result["status"] == "aguardando_rotulos"
+    assert result["retraining"]["reason"] == reason
+    assert "training_run_id" not in result and "model_uri" not in result
+    run = MlflowClient().get_run(result["workflow_run_id"])
+    assert run.info.status == "FINISHED"
+    assert run.data.tags["retraining_reason"] == reason
+    assert run.data.metrics["retraining_triggered"] == 0
+    assert run.data.metrics["labels_available"] == 0
+    saved = json.loads((Path(result["output_dir"]) / "result.json").read_text())
+    assert saved["retraining"] == result["retraining"]
+
+
+def remove_labels(frame, mode):
+    """Simula desfechos ausentes ou ainda incompletos no lote recebido.
+
+    Exemplo:
+        pending = remove_labels(frame, "parcial")
+    """
+    if mode == "ausente":
+        return frame.drop(columns="TARGET")
+    pending = frame.copy()
+    pending["TARGET"] = pending["TARGET"].astype(float)
+    pending.loc[: 10 if mode == "parcial" else len(pending), "TARGET"] = np.nan
+    return pending
+
+
+@pytest.mark.parametrize("mode", ["ausente", "nulo", "parcial"])
+def test_alert_without_complete_labels_waits_and_keeps_monitoring(baseline, mode):
+    """Mantém relatórios de drift e adia o treino sem transformar ausência em falha.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k without_complete_labels
+    """
+    data, directory, original = baseline
+    shifted = data.create_drift_version(original, income_factor=0.3, credit_factor=2)
+    remove_labels(shifted, mode).to_csv(
+        directory / "credit_scoring_v2.csv", index=False
+    )
+    result = run_workflow(directory)
+    assert_retraining_skipped(result, "rotulos_indisponiveis")
+    assert result["alerts"]["drift_alert"] == 1
+    assert (Path(result["output_dir"]) / "drift/data_drift.html").exists()
+
+
+@pytest.mark.parametrize("partition", ["treino", "validacao", "teste"])
+def test_single_class_labels_defer_retraining(baseline, partition):
+    """Exige duas classes para ajustar, escolher limiar e comparar AUC com validade.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k single_class_labels
+    """
+    data, directory, original = baseline
+    shifted = data.create_drift_version(original, income_factor=0.3, credit_factor=2)
+    ids = data.load_experiment(directory)["partitions"][partition]["SK_ID_CURR"]
+    shifted.loc[shifted["SK_ID_CURR"].isin(ids), "TARGET"] = 0
+    shifted.to_csv(directory / "credit_scoring_v2.csv", index=False)
+    assert_retraining_skipped(run_workflow(directory), "classes_insuficientes")
+
+
+def test_arriving_labels_trigger_retraining_on_next_execution(baseline):
+    """Retoma automaticamente o treino quando os rótulos chegam ao mesmo lote.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k arriving_labels
+    """
+    data, directory, original = baseline
+    shifted = data.create_drift_version(original, income_factor=0.3, credit_factor=2)
+    path = directory / "credit_scoring_v2.csv"
+    shifted.drop(columns="TARGET").to_csv(path, index=False)
+    pending = run_workflow(directory)
+    shifted.to_csv(path, index=False)
+    trained = run_workflow(directory)
+    assert_retraining_skipped(pending, "rotulos_indisponiveis")
+    assert trained["status"] == "treinado" and trained["retraining"]["triggered"]
+    assert trained["workflow_run_id"] != pending["workflow_run_id"]
+    run = MlflowClient().get_run(trained["workflow_run_id"])
+    assert run.data.metrics["retraining_triggered"] == 1
+    assert run.data.metrics["labels_available"] == 1
+
+
+def test_unlabeled_production_does_not_block_labeled_training(baseline):
+    """Retreina com treino/validação/teste rotulados sem exigir desfechos de produção.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k unlabeled_production
+    """
+    data, directory, original = baseline
+    shifted = data.create_drift_version(original, income_factor=0.3, credit_factor=2)
+    ids = data.load_experiment(directory)["partitions"]["producao"]["SK_ID_CURR"]
+    shifted["TARGET"] = shifted["TARGET"].astype(float)
+    shifted.loc[shifted["SK_ID_CURR"].isin(ids), "TARGET"] = np.nan
+    shifted.to_csv(directory / "credit_scoring_v2.csv", index=False)
+    result = run_workflow(directory)
+    assert result["status"] == "treinado"
+    assert result["retraining"]["labeled_rows"] == 800
+    restored = data.load_experiment(result["output_dir"])
+    assert "TARGET" not in restored["partitions"]["producao"]
+
+
+def test_training_preparation_still_requires_valid_labels():
+    """Mantém o contrato estrito no uso padrão de preparação para treinamento.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k still_requires
+    """
+    data, frame = HomeCreditData(), sample_data()
+    partitions = data.split(frame)
+    with pytest.raises(ValueError, match="exige TARGET"):
+        data.prepare_version(frame.drop(columns="TARGET"), partitions)
+    frame["TARGET"] = frame["TARGET"].astype(float)
+    frame.loc[0, "TARGET"] = 1.5
+    with pytest.raises(pa.errors.SchemaErrors):
+        data.prepare_version(frame, partitions, require_labels=False)
+
+
+def test_candidate_rejection_is_recorded_without_changing_reference(trained_version):
+    """Registra rejeição por teste insuficiente e preserva o modelo original.
+
+    Exemplo:
+        pytest tests/test_credit_monitoring.py -k candidate_rejection
+    """
+    data, directory, result, original_hash = trained_version
+    assert result["approval"]["approved"] is False
+    assert "minimum_sample_size" in result["approval"]["reasons"]
+    assert data.source_hash(directory / "experiment.joblib") == original_hash
+    run = MlflowClient().get_run(result["training_run_id"])
+    assert run.data.tags["approval_status"] == "rejected"
+    assert run.data.metrics["candidate_approved"] == 0
+    saved = json.loads((Path(result["output_dir"]) / "result.json").read_text())
+    assert saved["approval"]["approved"] is False
+    assert saved["comparison"] == result["comparison"]
+
+
+def test_credit_monitoring_forwards_tracking_uri(tmp_path, monkeypatch):
+    """Exemplo: pytest tests/test_credit_monitoring.py -k forwards_tracking."""
+    uri = f"sqlite:///{tmp_path / 'shared.db'}"
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", uri)
+    factory = Mock(return_value=Mock())
+    monkeypatch.setattr(ExperimentTracker, "from_directory", factory)
+
+    CreditMonitoring(tmp_path)
+
+    assert factory.call_args.kwargs["tracking_uri"] == uri

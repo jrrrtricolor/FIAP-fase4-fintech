@@ -3,9 +3,14 @@
 import logging
 import unittest
 
-import torch
+import pytest
 
-from ml_prep_kit import StructuredLoggingConfigurator, TabularBinaryClassifier
+torch = pytest.importorskip("torch", reason="Opcional: execute make install-ml-prep.")
+
+from ml_prep_kit import (  # noqa: E402
+    StructuredLoggingConfigurator,
+    TabularBinaryClassifier,
+)
 
 logger = logging.getLogger(__name__)
 

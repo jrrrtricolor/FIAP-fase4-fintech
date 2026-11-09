@@ -43,12 +43,88 @@ class DataValidator:
             ignore_index=True,
         ).sort_values("rows", ascending=False)
 
+    def compare_targets(self, tables, target) -> pd.DataFrame:
+        """Compara contagens e prevalência, sem atribuir causalidade.
+
+        Exemplo:
+            prevalence = validator.compare_targets(
+                {"treino": train, "teste": test}, "TARGET"
+            )
+        """
+        rows = []
+        for name, frame in tables.items():
+            counts = frame[target].value_counts(dropna=False).sort_index()
+            rows.append(
+                pd.DataFrame(
+                    {
+                        "dataset": name,
+                        "target": counts.index,
+                        "count": counts.to_numpy(),
+                        "percent": counts.to_numpy() / len(frame) * 100,
+                    }
+                )
+            )
+        return pd.concat(rows, ignore_index=True)
+
+    def compare_categories(self, tables, columns) -> pd.DataFrame:
+        """Compara contagens de categorias entre tabelas, incluindo valores ausentes.
+
+        Exemplo:
+            categories = validator.compare_categories(
+                {"treino": train, "teste": test}, ["NAME_INCOME_TYPE"]
+            )
+        """
+        rows = []
+        for column in columns:
+            counts = (
+                pd.concat(
+                    {
+                        name: frame[column].value_counts(dropna=False)
+                        for name, frame in tables.items()
+                    },
+                    axis=1,
+                )
+                .fillna(0)
+                .astype(int)
+            )
+            counts.index.name = "category"
+            rows.append(counts.reset_index().assign(column=column))
+        return pd.concat(rows, ignore_index=True)
+
+    def describe_numeric(self, frame, columns) -> pd.DataFrame:
+        """Resume colunas numéricas com percentis de 1%, 50%, 95% e 99%.
+
+        Exemplo:
+            statistics = validator.describe_numeric(
+                train, ["AMT_INCOME_TOTAL", "AMT_CREDIT"]
+            )
+        """
+        return frame[columns].describe(percentiles=[0.01, 0.5, 0.95, 0.99]).T
+
+    def select_dictionary(self, dictionary, columns, table_pattern) -> pd.DataFrame:
+        """Seleciona descrições no formato Table/Row/Description/Special.
+
+        Exemplo:
+            descriptions = validator.select_dictionary(
+                dictionary, ["TARGET", "AMT_CREDIT"], "application_train"
+            )
+        """
+        return dictionary.loc[
+            dictionary["Table"].str.contains(table_pattern, regex=False)
+            & dictionary["Row"].isin(columns),
+            ["Row", "Description", "Special"],
+        ].rename(columns={"Row": "coluna", "Description": "descrição"})
+
     def _summarize_one(
         self,
         df: pd.DataFrame,
         table_name: str,
     ) -> pd.DataFrame:
-        """Retorna o resumo de um DataFrame."""
+        """Retorna o resumo de um DataFrame.
+
+        Exemplo:
+            summary = validator._summarize_one(orders, "orders")
+        """
         return pd.DataFrame(
             [
                 {

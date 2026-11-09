@@ -1,0 +1,161 @@
+name: CI
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: registry.fintech.juhouse.com.br
+
+jobs:
+  checks:
+    name: Qualidade e testes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      MPLBACKEND: Agg
+      PYTEST_ADDOPTS: -ra
+    steps:
+      - name: Obter código
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          lfs: false
+          persist-credentials: false
+
+      - name: Preparar Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Executar Ruff, Flake8, formatação, testes e pip check
+        run: make check
+
+      - name: Validar alertas operacionais e recuperação
+        run: |
+          docker run --rm --entrypoint /bin/promtool \
+            -v "$PWD:/app:ro" -w /app/tests \
+            prom/prometheus:v3.14.0 test rules prometheus_alerts.yml
+
+  docker:
+    name: Docker (${{ matrix.image }})
+    needs: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: api
+            dockerfile: Dockerfile
+            python: python
+            push: true
+          - image: notebooks
+            dockerfile: docker/Dockerfile
+            python: python
+            push: false
+          - image: airflow
+            dockerfile: Dockerfile.airflow
+            python: /opt/venv/bin/python
+            push: false
+    steps:
+      - name: Obter código
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          lfs: false
+          persist-credentials: false
+
+      - name: Login no nosso registro Docker
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.CUSTOM_DOCKER_REGISTRY_USERNAME }}
+          password: ${{ secrets.CUSTOM_DOCKER_REGISTRY_PASSWORD }}
+
+      - name: Preparar Docker Buildx
+        uses: docker/setup-buildx-action@v4 # v4
+
+      - name: Construir e subir imagem
+        uses: docker/build-push-action@v7 # v7
+        env:
+          BUILDKIT_NO_CLIENT_TOKEN: "true"
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          tags: |
+            ${{ env.REGISTRY }}/fiap-fintech-${{ matrix.image }}:ci
+            ${{ env.REGISTRY }}/fiap-fintech-${{ matrix.image }}:${{ github.sha }}
+          push: ${{ matrix.push }}
+          load: true
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+      - name: Validar dependências e imports na imagem
+        run: |
+          docker run --rm --network none --entrypoint '${{ matrix.python }}' \
+            ${{ env.REGISTRY }}/fiap-fintech-${{ matrix.image }}:ci -m pip check
+          docker run --rm --network none --entrypoint '${{ matrix.python }}' \
+            ${{ env.REGISTRY }}/fiap-fintech-${{ matrix.image }}:ci -c \
+            'from ml_prep_kit import DriftMonitor, HomeCreditData; from src.credit_monitoring.api import app'
+
+  deploy:
+    name: Deploy da imagem de api gerada
+    runs-on: ubuntu-24.04
+    needs: docker
+    permissions:
+      contents: write
+    steps:
+      - name: Obter código
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          lfs: false
+
+      - name: Atualizar tag da imagem nos arquivos de configuração do Kubernetes
+        run: |
+          sed -i "s|image: ${{ env.REGISTRY }}/fiap-fintech-api:.*|image: ${{ env.REGISTRY }}/fiap-fintech-api:${{ github.sha }}|g" k8s/deployment.yml
+
+      - name: Commit e push das alterações no Kubernetes
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "github-actions@github.com"
+          git add k8s/deployment.yml
+          git commit --allow-empty -m "feat(k8s): [skip ci] Atualizar tag da imagem para ${{ github.sha }}"
+          git push || echo "Git push falhou, ignorando."
+
+      - name: Preparar Kubectl
+        uses: azure/setup-kubectl@v4
+        id: install
+        with:
+          version: 'latest' # Or match your specific cluster version
+
+      - name: Connectar ao cluster k8s via WireGuard VPN
+        uses: ankurk91/wireguard-action@v1
+        with:
+          config: ${{ secrets.K8S_CLUSTER_WIREGUARD_CONFIG }}
+
+      - name: Definir Contexto do Kubernetes
+        uses: azure/k8s-set-context@v4
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.K8S_KUBECTL_CONFIG }}
+
+      - name: Deploy da imagem para o Kubernetes
+        run: |
+          kubectl apply -f k8s/deployment.yml --namespace=fiap-fintech-api
+          kubectl apply -f k8s/service.yml --namespace=fiap-fintech-api
+
+      - name: Verificar Deploy
+        run: |
+          kubectl rollout status deployment/fiap-fintech-api-deployment --namespace=fiap-fintech-api
